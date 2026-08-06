@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.env
+.venv/
+venv/
+
+# Conda
+.envrc
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Python cache
+.pytest_cache/
+.mypy_cache/
+
+# Temporary uploads
+uploads/
+projects/
+exports/
+
+# Model weights
+*.pt
+
+# Environment
+.env
+
+# Node
+node_modules/
+
+# Coverage
+.coverage
+htmlcov/
+
+# React
+frontend/dist/
+frontend/node_modules/
+
+# HuggingFace cache
+.cache/

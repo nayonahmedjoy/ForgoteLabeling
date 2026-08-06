@@ -1,0 +1,28 @@
+# Backend
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Database
+sqlalchemy
+
+# Validation
+pydantic
+pydantic-settings
+
+# AI
+ultralytics
+opencv-python
+numpy
+pillow
+
+# Utilities
+python-dotenv
+loguru
+
+# Development
+pytest
+httpx
+
+# Optional
+tqdm
