@@ -1,8 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, File, UploadFile
 
 from app.core.config import settings
-from app.utils.responses import success, error
 from app.services.project.manager import manager
+from app.services.upload.manager import manager as upload_manager
+from app.utils.responses import success, error
 
 router = APIRouter()
 
@@ -17,8 +18,8 @@ async def health():
     return success(
         "Backend is healthy.",
         {
-            "status": "healthy"
-        }
+            "status": "healthy",
+        },
     )
 
 
@@ -27,8 +28,8 @@ async def version():
     return success(
         "Application version.",
         {
-            "version": settings.VERSION
-        }
+            "version": settings.VERSION,
+        },
     )
 
 
@@ -39,7 +40,7 @@ def create_project():
 
     return success(
         "Project created.",
-        project.model_dump(mode="json")
+        project.model_dump(mode="json"),
     )
 
 
@@ -48,7 +49,10 @@ def list_projects():
 
     return success(
         "Projects fetched.",
-        manager.list_projects()
+        [
+            project.model_dump(mode="json")
+            for project in manager.list_projects()
+        ],
     )
 
 
@@ -58,11 +62,14 @@ def get_project(project_id: str):
     project = manager.get_project(project_id)
 
     if project is None:
-        return error("Project not found.", status_code=404)
+        return error(
+            "Project not found.",
+            status_code=404,
+        )
 
     return success(
         "Project fetched.",
-        project
+        project.model_dump(mode="json"),
     )
 
 
@@ -72,6 +79,66 @@ def delete_project(project_id: str):
     deleted = manager.delete_project(project_id)
 
     if not deleted:
-        return error("Project not found.", status_code=404)
+        return error(
+            "Project not found.",
+            status_code=404,
+        )
 
     return success("Project deleted.")
+
+
+@router.post("/projects/{project_id}/images")
+def upload_image(
+    project_id: str,
+    file: UploadFile = File(...),
+):
+
+    image = upload_manager.upload_image(
+        project_id,
+        file,
+    )
+
+    if image is None:
+        return error(
+            "Project not found.",
+            status_code=404,
+        )
+
+    return success(
+        "Image uploaded.",
+        image.model_dump(mode="json"),
+    )
+
+
+@router.get("/projects/{project_id}/images")
+def list_images(project_id: str):
+
+    images = upload_manager.list_images(project_id)
+
+    return success(
+        "Images fetched.",
+        [
+            image.model_dump(mode="json")
+            for image in images
+        ],
+    )
+
+
+@router.delete("/projects/{project_id}/images/{image_id}")
+def delete_image(
+    project_id: str,
+    image_id: str,
+):
+
+    deleted = upload_manager.delete_image(
+        project_id,
+        image_id,
+    )
+
+    if not deleted:
+        return error(
+            "Image not found.",
+            status_code=404,
+        )
+
+    return success("Image deleted.")

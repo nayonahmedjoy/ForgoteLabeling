@@ -2,13 +2,11 @@ import json
 import shutil
 import uuid
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import settings
 from app.models.project import Project
-from datetime import datetime, UTC
-
 
 UPLOAD_DIR = settings.UPLOAD_DIR
 
@@ -32,14 +30,20 @@ class ProjectManager:
             updated_at=datetime.now(UTC),
         )
 
-        with open(project_path / "metadata.json", "w") as f:
+        self.save_project(project)
+
+        return project
+
+    def save_project(self, project: Project):
+
+        metadata = UPLOAD_DIR / project.id / "metadata.json"
+
+        with open(metadata, "w") as f:
             json.dump(
                 project.model_dump(mode="json"),
                 f,
                 indent=4,
             )
-
-        return project
 
     def list_projects(self):
 
@@ -55,7 +59,12 @@ class ProjectManager:
             if metadata.exists():
 
                 with open(metadata) as f:
-                    projects.append(json.load(f))
+
+                    project = Project.model_validate(
+                        json.load(f)
+                    )
+
+                    projects.append(project)
 
         return projects
 
@@ -67,7 +76,10 @@ class ProjectManager:
             return None
 
         with open(metadata) as f:
-            return json.load(f)
+
+            return Project.model_validate(
+                json.load(f)
+            )
 
     def delete_project(self, project_id: str):
 
