@@ -1,9 +1,11 @@
 from fastapi import APIRouter, File, UploadFile
 
 from app.core.config import settings
+from app.models.annotation import Annotation
+from app.services.annotation.manager import manager as annotation_manager
 from app.services.project.manager import manager
 from app.services.upload.manager import manager as upload_manager
-from app.utils.responses import success, error
+from app.utils.responses import error, success
 
 router = APIRouter()
 
@@ -33,9 +35,12 @@ async def version():
     )
 
 
+# -----------------------
+# Projects
+# -----------------------
+
 @router.post("/projects")
 def create_project():
-
     project = manager.create_project()
 
     return success(
@@ -46,7 +51,6 @@ def create_project():
 
 @router.get("/projects")
 def list_projects():
-
     return success(
         "Projects fetched.",
         [
@@ -58,7 +62,6 @@ def list_projects():
 
 @router.get("/projects/{project_id}")
 def get_project(project_id: str):
-
     project = manager.get_project(project_id)
 
     if project is None:
@@ -75,7 +78,6 @@ def get_project(project_id: str):
 
 @router.delete("/projects/{project_id}")
 def delete_project(project_id: str):
-
     deleted = manager.delete_project(project_id)
 
     if not deleted:
@@ -87,12 +89,15 @@ def delete_project(project_id: str):
     return success("Project deleted.")
 
 
+# -----------------------
+# Images
+# -----------------------
+
 @router.post("/projects/{project_id}/images")
 def upload_image(
     project_id: str,
     file: UploadFile = File(...),
 ):
-
     image = upload_manager.upload_image(
         project_id,
         file,
@@ -112,7 +117,6 @@ def upload_image(
 
 @router.get("/projects/{project_id}/images")
 def list_images(project_id: str):
-
     images = upload_manager.list_images(project_id)
 
     return success(
@@ -129,7 +133,6 @@ def delete_image(
     project_id: str,
     image_id: str,
 ):
-
     deleted = upload_manager.delete_image(
         project_id,
         image_id,
@@ -142,3 +145,56 @@ def delete_image(
         )
 
     return success("Image deleted.")
+
+
+# -----------------------
+# Annotations
+# -----------------------
+
+@router.post("/projects/{project_id}/annotations")
+def save_annotation(
+    project_id: str,
+    annotation: Annotation,
+):
+    annotation_manager.save_label(
+        project_id,
+        annotation.image_id,
+        annotation.label,
+    )
+
+    return success(
+        "Annotation saved.",
+        annotation.model_dump(mode="json"),
+    )
+
+
+@router.get("/projects/{project_id}/annotations")
+def list_annotations(project_id: str):
+    annotations = annotation_manager.list_annotations(project_id)
+
+    return success(
+        "Annotations fetched.",
+        [
+            item.model_dump(mode="json")
+            for item in annotations
+        ],
+    )
+
+
+@router.delete("/projects/{project_id}/annotations/{image_id}")
+def delete_annotation(
+    project_id: str,
+    image_id: str,
+):
+    deleted = annotation_manager.delete_annotation(
+        project_id,
+        image_id,
+    )
+
+    if not deleted:
+        return error(
+            "Annotation not found.",
+            status_code=404,
+        )
+
+    return success("Annotation deleted.")
