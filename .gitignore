@@ -1,61 +1,85 @@
+# =========================
 # Python
+# =========================
 __pycache__/
 *.py[cod]
 *$py.class
 
+# =========================
 # Virtual Environment
-.env
+# =========================
 .venv/
 venv/
+.env
 
-# Conda
-.envrc
-
+# =========================
 # IDE
+# =========================
 .vscode/
 .idea/
 
-# Logs
-logs/
-*.log
-
-# Database
-*.db
-*.sqlite3
-
+# =========================
 # OS
+# =========================
 .DS_Store
 Thumbs.db
 
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Database
+# =========================
+*.db
+*.sqlite3
+
+# =========================
 # Build
+# =========================
 dist/
 build/
 
-# Python cache
+# =========================
+# Cache
+# =========================
 .pytest_cache/
 .mypy_cache/
+.cache/
 
-# Temporary uploads
-uploads/
-projects/
-exports/
+# =========================
+# Runtime Data
+# =========================
+uploads/*
+!uploads/.gitkeep
 
-# Model weights
+exports/*
+!exports/.gitkeep
+
+projects/*
+!projects/.gitkeep
+
+checkpoints/*
+!checkpoints/.gitkeep
+
+# =========================
+# Models
+# =========================
 *.pt
+*.onnx
+*.engine
 
-# Environment
-.env
-
+# =========================
 # Node
+# =========================
 node_modules/
+frontend/node_modules/
+frontend/dist/
 
+# =========================
 # Coverage
+# =========================
 .coverage
 htmlcov/
-
-# React
-frontend/dist/
-frontend/node_modules/
-
-# HuggingFace cache
-.cache/
