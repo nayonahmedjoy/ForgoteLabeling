@@ -6,6 +6,9 @@ from app.services.annotation.manager import manager as annotation_manager
 from app.services.project.manager import manager
 from app.services.upload.manager import manager as upload_manager
 from app.utils.responses import error, success
+from fastapi.responses import FileResponse
+
+from app.services.export.manager import manager as export_manager
 
 router = APIRouter()
 
@@ -197,4 +200,33 @@ def delete_annotation(
             status_code=404,
         )
 
-    return success("Annotation deleted.")
+    return success("Annotation deleted.") 
+
+@router.get("/projects/{project_id}/export")
+def export_project(project_id: str):
+
+    project = manager.get_project(project_id)
+
+    if project is None:
+        return error(
+            "Project not found.",
+            status_code=404,
+        )
+
+    images = upload_manager.list_images(project_id)
+
+    annotations = annotation_manager.list_annotations(
+        project_id
+    )
+
+    csv_file = export_manager.export_csv(
+        project_id,
+        annotations,
+        images,
+    )
+
+    return FileResponse(
+        path=csv_file,
+        filename="labels.csv",
+        media_type="text/csv",
+    )
