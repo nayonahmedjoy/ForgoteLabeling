@@ -1,8 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.core.config import ensure_storage_dirs, settings
+from app.utils.responses import error
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -18,6 +21,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+def _on_validation_error(request: Request, exc: RequestValidationError):
+    """Return request-validation failures in the app's standard envelope.
+
+    FastAPI's default handler returns a bare ``{"detail": [...]}`` at HTTP 422,
+    which is inconsistent with every other endpoint's
+    ``{"success", "message", "error"}`` shape. We keep the 422 status and the
+    original error list (under ``error.detail``) so clients that already read
+    ``detail`` still work, while new clients can rely on the envelope. Successful
+    responses are unchanged.
+    """
+    return error(
+        "Request validation failed.",
+        422,
+        {"detail": jsonable_encoder(exc.errors())},
+    )
 
 
 @app.on_event("startup")

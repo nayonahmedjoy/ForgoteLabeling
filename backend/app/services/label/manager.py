@@ -10,6 +10,8 @@ class LabelManager:
     """Project-specific labels / classes, persisted to labels.json."""
 
     def _load(self, project_id: str) -> list[Label]:
+        if not storage.is_safe_id(project_id):
+            return []
         raw = storage.read_json(storage.labels_path(project_id), [])
         labels: list[Label] = []
         for item in raw:
@@ -27,6 +29,12 @@ class LabelManager:
 
     def list_labels(self, project_id: str) -> list[Label]:
         return self._load(project_id)
+
+    def get_label(self, project_id: str, label_id: str) -> Label | None:
+        for label in self._load(project_id):
+            if label.id == label_id:
+                return label
+        return None
 
     def create_label(
         self,

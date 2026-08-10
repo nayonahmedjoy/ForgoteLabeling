@@ -24,6 +24,8 @@ class UploadManager:
     of truth, so uploads survive a backend restart."""
 
     def _load(self, project_id: str) -> list[Image]:
+        if not storage.is_safe_id(project_id):
+            return []
         raw = storage.read_json(storage.images_index_path(project_id), [])
         images: list[Image] = []
         for item in raw:
@@ -52,7 +54,7 @@ class UploadManager:
         return f"{stem}_{uuid4().hex[:8]}{suffix}"
 
     def upload_image(self, project_id: str, file: UploadFile) -> Image | None:
-        if project_manager.get_project(project_id) is None:
+        if not project_manager.exists(project_id):
             return None
 
         suffix = Path(file.filename or "").suffix.lower()
@@ -92,9 +94,11 @@ class UploadManager:
         images.append(image)
         self._save(project_id, images)
 
-        # Keep project metadata counts in sync.
-        project_manager.get_project(project_id)
-
+        # Project image/annotation counts are recomputed lazily from disk on the
+        # next read (get_project / list_projects / touch_opened). We deliberately
+        # do NOT refresh here: doing so re-read every image + annotation file per
+        # uploaded file, making a bulk upload O(n^2). The stored count is only a
+        # cache, so leaving it stale until the next read changes no served value.
         return image
 
     def list_images(self, project_id: str) -> list[Image]:

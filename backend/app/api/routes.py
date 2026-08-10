@@ -201,8 +201,21 @@ def update_label(project_id: str, label_id: str, payload: LabelUpdate):
 
 @router.delete("/projects/{project_id}/labels/{label_id}")
 def delete_label(project_id: str, label_id: str):
-    if not label_manager.delete_label(project_id, label_id):
+    if label_manager.get_label(project_id, label_id) is None:
         return error("Label not found.", 404)
+
+    # Block deletion while annotations still reference this label, so boxes are
+    # never silently orphaned. The caller must reassign or delete those
+    # annotations first.
+    references = annotation_manager.count_for_label(project_id, label_id)
+    if references:
+        return error(
+            f"Label is used by {references} annotation(s) and cannot be deleted.",
+            409,
+            {"annotation_count": references},
+        )
+
+    label_manager.delete_label(project_id, label_id)
     return success("Label deleted.")
 
 
@@ -210,12 +223,35 @@ def delete_label(project_id: str, label_id: str):
 # Annotations
 # -----------------------
 
+def _serialize_annotations(project_id: str, annotations):
+    """Serialize annotations, resolving each ``label`` from its ``label_id``.
+
+    The stored ``label`` string is a denormalized cache that goes stale when a
+    label is renamed. ``label_id`` is the source of truth, so on read we
+    overwrite ``label`` with the label's current name whenever the id resolves.
+    Orphan/legacy annotations (no ``label_id`` or an id no label owns) keep
+    their stored string, so no information is lost. The on-disk JSON is not
+    modified.
+    """
+    names = {
+        label.id: label.name
+        for label in label_manager.list_labels(project_id)
+    }
+    result = []
+    for annotation in annotations:
+        data = annotation.model_dump(mode="json")
+        if annotation.label_id in names:
+            data["label"] = names[annotation.label_id]
+        result.append(data)
+    return result
+
+
 @router.get("/projects/{project_id}/images/{image_id}/annotations")
 def list_annotations(project_id: str, image_id: str):
     annotations = annotation_manager.list_for_image(project_id, image_id)
     return success(
         "Annotations fetched.",
-        [a.model_dump(mode="json") for a in annotations],
+        _serialize_annotations(project_id, annotations),
     )
 
 
@@ -229,7 +265,8 @@ def create_annotation(project_id: str, image_id: str, payload: AnnotationIn):
         return error(str(exc), 400)
     # Refresh project counts.
     project_manager.get_project(project_id)
-    return success("Annotation created.", annotation.model_dump(mode="json"), 201)
+    data = _serialize_annotations(project_id, [annotation])[0]
+    return success("Annotation created.", data, 201)
 
 
 @router.put("/projects/{project_id}/images/{image_id}/annotations/{annotation_id}")
@@ -245,7 +282,8 @@ def update_annotation(
         return error(str(exc), 400)
     if annotation is None:
         return error("Annotation not found.", 404)
-    return success("Annotation updated.", annotation.model_dump(mode="json"))
+    data = _serialize_annotations(project_id, [annotation])[0]
+    return success("Annotation updated.", data)
 
 
 @router.delete(

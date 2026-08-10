@@ -16,6 +16,8 @@ class AnnotationManager:
     """Bounding-box annotations, persisted to annotations.json per project."""
 
     def _load(self, project_id: str) -> list[Annotation]:
+        if not storage.is_safe_id(project_id):
+            return []
         raw = storage.read_json(storage.annotations_path(project_id), [])
 
         annotations: list[Annotation] = []
@@ -53,6 +55,16 @@ class AnnotationManager:
 
     def count(self, project_id: str) -> int:
         return len(self._load(project_id))
+
+    def count_for_label(self, project_id: str, label_id: str) -> int:
+        """How many annotations reference ``label_id``.
+
+        Used to block deletion of a label that is still in use (M1 label
+        deletion integrity), so annotations are never silently orphaned.
+        """
+        if not label_id:
+            return 0
+        return sum(1 for a in self._load(project_id) if a.label_id == label_id)
 
     def create(
         self,

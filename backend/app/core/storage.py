@@ -22,7 +22,29 @@ from typing import Any
 from app.core.config import settings
 
 
+def is_safe_id(value: str) -> bool:
+    """True if ``value`` is safe to use as a single filesystem path component.
+
+    Every application id is a ``uuid4`` string, so this accepts all legitimate
+    ids while rejecting anything that could escape the storage root: empty
+    values, path separators, parent references (``..``) and null bytes. Used to
+    stop a crafted ``project_id`` from redirecting reads/writes/deletes outside
+    ``UPLOAD_DIR`` (path traversal).
+    """
+    return bool(value) and not (
+        "/" in value
+        or "\\" in value
+        or ".." in value
+        or "\x00" in value
+    )
+
+
 def project_dir(project_id: str) -> Path:
+    # Defense in depth: never build a filesystem path from an unsafe id.
+    # Callers guard first and return the API's not-found convention, so this
+    # raise is a safety net that should be unreachable in normal operation.
+    if not is_safe_id(project_id):
+        raise ValueError(f"Unsafe project id: {project_id!r}")
     return settings.UPLOAD_DIR / project_id
 
 

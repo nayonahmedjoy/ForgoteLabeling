@@ -41,6 +41,8 @@ class ProjectManager:
         )
 
     def _load(self, project_id: str) -> Project | None:
+        if not storage.is_safe_id(project_id):
+            return None
         data = storage.read_json(storage.metadata_path(project_id), None)
         if data is None:
             return None
@@ -48,6 +50,16 @@ class ProjectManager:
             return Project(**data)
         except Exception:
             return None
+
+    def exists(self, project_id: str) -> bool:
+        """Cheap existence check that does NOT recompute counts.
+
+        ``get_project`` refreshes image/annotation counts from disk on every
+        call, which is wasteful when the caller only needs to know the project
+        is present (e.g. the per-file upload path). This reads just the
+        metadata and is safe against unsafe ids via ``_load``.
+        """
+        return self._load(project_id) is not None
 
     def _refresh_counts(self, project: Project) -> Project:
         """Recompute image/annotation counts from disk so metadata is accurate.
@@ -121,6 +133,8 @@ class ProjectManager:
         return self._refresh_counts(project)
 
     def delete_project(self, project_id: str) -> bool:
+        if not storage.is_safe_id(project_id):
+            return False
         project_path = storage.project_dir(project_id)
         if not project_path.exists():
             return False

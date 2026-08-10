@@ -54,6 +54,11 @@ class ExportManager:
         for ann in annotations:
             annotations_by_image.setdefault(ann.image_id, []).append(ann)
 
+        # Boxes that cannot be represented as a YOLO class (no label, or a
+        # label id that no label owns) are recorded here so they are surfaced
+        # explicitly in the export instead of silently vanishing.
+        skipped: list[str] = []
+
         for image in images:
             src = Path(image.filepath)
             if src.exists():
@@ -61,10 +66,14 @@ class ExportManager:
 
             # One label file per image (empty file if no boxes).
             label_lines: list[str] = []
+            skipped_here = 0
             for ann in annotations_by_image.get(image.id, []):
                 cls = class_index.get(ann.label_id)
                 if cls is None:
-                    continue  # skip boxes whose label was deleted
+                    # Orphan/unlabeled box: keep it out of the YOLO label file
+                    # (it has no valid class) but count it for the report.
+                    skipped_here += 1
+                    continue
                 # Convert top-left normalized box -> YOLO center format.
                 cx = ann.x + ann.width / 2
                 cy = ann.y + ann.height / 2
@@ -72,9 +81,27 @@ class ExportManager:
                     f"{cls} {cx:.6f} {cy:.6f} {ann.width:.6f} {ann.height:.6f}"
                 )
 
+            if skipped_here:
+                skipped.append(f"{image.filename}\t{skipped_here}")
+
             label_name = Path(image.filename).stem + ".txt"
             (labels_out / label_name).write_text(
                 "\n".join(label_lines) + ("\n" if label_lines else ""),
+                encoding="utf-8",
+            )
+
+        # Only write the report when something was skipped, so a fully-labeled
+        # dataset still exports a pristine, standard YOLO structure.
+        if skipped:
+            total = sum(int(line.split("\t")[1]) for line in skipped)
+            (build_dir / "unlabeled.txt").write_text(
+                "# Annotations omitted from this YOLO export because they have "
+                "no label or reference a label that no longer exists.\n"
+                "# These boxes were NOT dropped from the project; assign a "
+                "valid label to include them.\n"
+                "# Format: <image_filename><TAB><skipped_count>\n"
+                + "\n".join(skipped)
+                + f"\n# total_skipped\t{total}\n",
                 encoding="utf-8",
             )
 
