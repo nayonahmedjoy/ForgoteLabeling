@@ -276,6 +276,13 @@ def update_annotation(
     annotation_id: str,
     payload: AnnotationIn,
 ):
+    # The annotation must exist AND belong to the image named in the path.
+    # Matching on annotation_id alone would let a request against the wrong
+    # image URL mutate an unrelated annotation, so we reject a mismatch as
+    # not-found rather than silently editing the wrong box.
+    existing = annotation_manager.get(project_id, annotation_id)
+    if existing is None or existing.image_id != image_id:
+        return error("Annotation not found.", 404)
     try:
         annotation = annotation_manager.update(project_id, annotation_id, payload)
     except ValueError as exc:
@@ -290,6 +297,11 @@ def update_annotation(
     "/projects/{project_id}/images/{image_id}/annotations/{annotation_id}"
 )
 def delete_annotation(project_id: str, image_id: str, annotation_id: str):
+    # Same relationship guard as update: only delete the annotation when it
+    # actually belongs to the image in the path.
+    existing = annotation_manager.get(project_id, annotation_id)
+    if existing is None or existing.image_id != image_id:
+        return error("Annotation not found.", 404)
     if not annotation_manager.delete(project_id, annotation_id):
         return error("Annotation not found.", 404)
     project_manager.get_project(project_id)

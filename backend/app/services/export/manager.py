@@ -59,10 +59,29 @@ class ExportManager:
         # explicitly in the export instead of silently vanishing.
         skipped: list[str] = []
 
+        # YOLO pairs each image with its label file by a shared stem. Uploads
+        # keep full filenames unique, but two images can still share a stem
+        # (e.g. cat.jpg and cat.png both map to cat.txt), which would overwrite
+        # one label file and silently drop its annotations. Track used stems and
+        # disambiguate on collision so the image copy and its label file always
+        # stay paired and no annotations are lost. In the common (no-collision)
+        # case the export names are byte-identical to before.
+        used_stems: set[str] = set()
+
         for image in images:
             src = Path(image.filepath)
+            suffix = Path(image.filename).suffix
+
+            stem = Path(image.filename).stem
+            unique_stem = stem
+            counter = 1
+            while unique_stem in used_stems:
+                unique_stem = f"{stem}_{counter}"
+                counter += 1
+            used_stems.add(unique_stem)
+
             if src.exists():
-                shutil.copy2(src, images_out / image.filename)
+                shutil.copy2(src, images_out / f"{unique_stem}{suffix}")
 
             # One label file per image (empty file if no boxes).
             label_lines: list[str] = []
@@ -84,7 +103,7 @@ class ExportManager:
             if skipped_here:
                 skipped.append(f"{image.filename}\t{skipped_here}")
 
-            label_name = Path(image.filename).stem + ".txt"
+            label_name = unique_stem + ".txt"
             (labels_out / label_name).write_text(
                 "\n".join(label_lines) + ("\n" if label_lines else ""),
                 encoding="utf-8",

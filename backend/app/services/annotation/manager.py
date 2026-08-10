@@ -53,6 +53,18 @@ class AnnotationManager:
     def list_for_image(self, project_id: str, image_id: str) -> list[Annotation]:
         return [a for a in self._load(project_id) if a.image_id == image_id]
 
+    def get(self, project_id: str, annotation_id: str) -> Annotation | None:
+        """Return one annotation by id, or ``None`` if it does not exist.
+
+        Used by the routes to verify an annotation actually belongs to the
+        image named in the request path before updating/deleting it, so a call
+        against the wrong image URL can never mutate an unrelated annotation.
+        """
+        for annotation in self._load(project_id):
+            if annotation.id == annotation_id:
+                return annotation
+        return None
+
     def count(self, project_id: str) -> int:
         return len(self._load(project_id))
 
