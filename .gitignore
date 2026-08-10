@@ -64,6 +64,11 @@ projects/*
 checkpoints/*
 !checkpoints/.gitkeep
 
+# Backend runtime data (config BASE_DIR = backend/)
+backend/uploads/
+backend/exports/
+backend/checkpoints/
+
 # =========================
 # Models
 # =========================

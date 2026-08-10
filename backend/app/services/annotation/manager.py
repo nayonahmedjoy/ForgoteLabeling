@@ -1,116 +1,127 @@
-import json
-from pathlib import Path
+from datetime import datetime, timezone
 
-from app.core.config import settings
-from app.models.annotation import Annotation
+from app.core import storage
+from app.models.annotation import Annotation, AnnotationIn
 
-UPLOAD_DIR = settings.UPLOAD_DIR
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
 
 
 class AnnotationManager:
+    """Bounding-box annotations, persisted to annotations.json per project."""
 
-    def _annotation_file(self, project_id: str):
-        return (
-            UPLOAD_DIR
-            / project_id
-            / "annotations"
-            / "annotations.json"
+    def _load(self, project_id: str) -> list[Annotation]:
+        raw = storage.read_json(storage.annotations_path(project_id), [])
+
+        annotations: list[Annotation] = []
+        for item in raw:
+            try:
+                annotations.append(Annotation(**item))
+            except Exception:
+                # Skip legacy/invalid entries (e.g. old image-level labels
+                # without bounding-box coordinates) instead of crashing.
+                continue
+        return annotations
+
+    def _save(self, project_id: str, annotations: list[Annotation]) -> None:
+        storage.write_json(
+            storage.annotations_path(project_id),
+            [a.model_dump(mode="json") for a in annotations],
         )
 
-    def list_annotations(self, project_id: str):
+    def _normalize_box(self, data: AnnotationIn) -> tuple[float, float, float, float]:
+        x = _clamp(data.x, 0.0, 1.0)
+        y = _clamp(data.y, 0.0, 1.0)
+        width = _clamp(data.width, 0.0, 1.0 - x)
+        height = _clamp(data.height, 0.0, 1.0 - y)
 
-        file = self._annotation_file(project_id)
+        if width <= 0 or height <= 0:
+            raise ValueError("Bounding box must have positive width and height.")
 
-        if not file.exists():
-            return []
+        return x, y, width, height
 
-        with open(file, "r") as f:
-            data = json.load(f)
+    def list_all(self, project_id: str) -> list[Annotation]:
+        return self._load(project_id)
 
-        return [
-            Annotation(**item)
-            for item in data
-        ]
+    def list_for_image(self, project_id: str, image_id: str) -> list[Annotation]:
+        return [a for a in self._load(project_id) if a.image_id == image_id]
 
-    def save_label(
+    def count(self, project_id: str) -> int:
+        return len(self._load(project_id))
+
+    def create(
         self,
         project_id: str,
         image_id: str,
-        label: str,
-    ):
+        data: AnnotationIn,
+    ) -> Annotation:
+        x, y, width, height = self._normalize_box(data)
 
-        annotations = self.list_annotations(project_id)
+        annotation = Annotation(
+            image_id=image_id,
+            label_id=data.label_id,
+            label=data.label,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+        )
 
-        found = False
+        annotations = self._load(project_id)
+        annotations.append(annotation)
+        self._save(project_id, annotations)
+
+        return annotation
+
+    def update(
+        self,
+        project_id: str,
+        annotation_id: str,
+        data: AnnotationIn,
+    ) -> Annotation | None:
+        x, y, width, height = self._normalize_box(data)
+
+        annotations = self._load(project_id)
 
         for annotation in annotations:
+            if annotation.id == annotation_id:
+                annotation.label_id = data.label_id
+                annotation.label = data.label
+                annotation.x = x
+                annotation.y = y
+                annotation.width = width
+                annotation.height = height
+                annotation.updated_at = _now()
 
-            if annotation.image_id == image_id:
+                self._save(project_id, annotations)
+                return annotation
 
-                annotation.label = label
-                found = True
-                break
+        return None
 
-        if not found:
+    def delete(self, project_id: str, annotation_id: str) -> bool:
+        annotations = self._load(project_id)
+        remaining = [a for a in annotations if a.id != annotation_id]
 
-            annotations.append(
-                Annotation(
-                    image_id=image_id,
-                    label=label,
-                )
-            )
-
-        file = self._annotation_file(project_id)
-
-        file.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        with open(file, "w") as f:
-
-            json.dump(
-                [
-                    item.model_dump(mode="json")
-                    for item in annotations
-                ],
-                f,
-                indent=4,
-            )
-
-        return True
-
-    def delete_annotation(
-        self,
-        project_id: str,
-        image_id: str,
-    ):
-
-        annotations = self.list_annotations(project_id)
-
-        new_annotations = [
-            item
-            for item in annotations
-            if item.image_id != image_id
-        ]
-
-        if len(new_annotations) == len(annotations):
+        if len(remaining) == len(annotations):
             return False
 
-        file = self._annotation_file(project_id)
-
-        with open(file, "w") as f:
-
-            json.dump(
-                [
-                    item.model_dump(mode="json")
-                    for item in new_annotations
-                ],
-                f,
-                indent=4,
-            )
-
+        self._save(project_id, remaining)
         return True
+
+    def delete_for_image(self, project_id: str, image_id: str) -> int:
+        annotations = self._load(project_id)
+        remaining = [a for a in annotations if a.image_id != image_id]
+
+        removed = len(annotations) - len(remaining)
+        if removed:
+            self._save(project_id, remaining)
+
+        return removed
 
 
 manager = AnnotationManager()

@@ -1,0 +1,543 @@
+:root {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --panel: #f7f7f9;
+  --border: #e5e4e7;
+  --code-bg: #f4f3ec;
+  --accent: #aa3bff;
+  --accent-hover: #9326e6;
+  --accent-bg: rgba(170, 59, 255, 0.1);
+  --accent-border: rgba(170, 59, 255, 0.5);
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.1);
+  --ok: #16a34a;
+  --shadow:
+    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font: 15px/1.5 var(--sans);
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #9ca3af;
+    --text-h: #f3f4f6;
+    --bg: #16171d;
+    --panel: #1f2028;
+    --border: #2e303a;
+    --code-bg: #1f2028;
+    --accent: #c084fc;
+    --accent-hover: #a855f7;
+    --accent-bg: rgba(192, 132, 252, 0.15);
+    --accent-border: rgba(192, 132, 252, 0.5);
+    --danger: #f87171;
+    --danger-bg: rgba(248, 113, 113, 0.15);
+    --shadow:
+      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#root {
+  width: 100%;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--heading);
+  color: var(--text-h);
+  font-weight: 600;
+  margin: 0;
+}
+h1 {
+  font-size: 28px;
+  letter-spacing: -0.5px;
+}
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-h);
+  border-radius: 8px;
+  padding: 8px 14px;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+button:hover {
+  border-color: var(--accent-border);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover {
+  background: var(--accent-hover);
+}
+button.danger {
+  color: var(--danger);
+  border-color: transparent;
+  background: var(--danger-bg);
+}
+button.small {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+input[type="text"],
+input[type="color"],
+input:not([type]) {
+  font: inherit;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  width: 100%;
+}
+input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+code {
+  font-family: var(--mono);
+  border-radius: 4px;
+  color: var(--text-h);
+  font-size: 13px;
+  padding: 2px 6px;
+  background: var(--code-bg);
+}
+/* ---- Navbar ---- */
+.app-navbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.app-navbar .brand {
+  font-weight: 700;
+  color: var(--text-h);
+  font-size: 18px;
+}
+.app-navbar .spacer {
+  flex: 1;
+}
+.app-navbar .crumb {
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* ---- Generic layout ---- */
+.page {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.between {
+  justify-content: space-between;
+}
+.muted {
+  color: var(--text);
+  font-size: 13px;
+}
+.state {
+  padding: 56px 24px;
+  text-align: center;
+  color: var(--text);
+}
+.state.error {
+  color: var(--danger);
+}
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* ---- Project grid / cards ---- */
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.card h3 {
+  font-size: 16px;
+  word-break: break-word;
+}
+.card .stats {
+  display: flex;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+/* ---- Modal ---- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.modal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  width: 380px;
+  max-width: 90vw;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---- Workspace ---- */
+.workspace {
+  display: grid;
+  grid-template-columns: 230px 1fr 270px;
+  height: calc(100vh - 55px);
+  min-height: 0;
+}
+.panel {
+  padding: 14px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.panel.left {
+  border-right: 1px solid var(--border);
+}
+.panel.right {
+  border-left: 1px solid var(--border);
+}
+.panel h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.panel .section {
+  margin-bottom: 22px;
+}
+
+.thumb {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.thumb:hover {
+  background: var(--accent-bg);
+}
+.thumb.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.thumb img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--code-bg);
+  flex-shrink: 0;
+}
+.thumb .name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thumb .count {
+  font-size: 11px;
+  color: var(--text);
+}
+/* ---- Canvas ---- */
+.canvas-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.canvas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.canvas-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background:
+    repeating-conic-gradient(var(--code-bg) 0% 25%, transparent 0% 50%) 50% / 22px 22px;
+  padding: 16px;
+  min-height: 0;
+}
+.canvas-stage .placeholder {
+  color: var(--text);
+}
+/* Positioned wrapper: the <img> and the overlay <canvas> stack here at the
+   same size (set inline from the fitted dimensions). */
+.bbox-frame {
+  position: relative;
+  display: block;
+  box-shadow: var(--shadow);
+  max-width: 100%;
+  max-height: 100%;
+}
+/* Visual layer only. Non-interactive and non-draggable so the browser can
+   never start a native image-drag ghost or intercept the overlay's pointer
+   events. */
+.bbox-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+/* Interaction layer: transparent overlay pinned over the image. Owns all
+   pointer events, shows the crosshair on hover/drag, and blocks native
+   selection / touch scrolling while a box is being drawn. */
+.bbox-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  touch-action: none;
+}
+
+/* ---- Labels ---- */
+.label-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 4px;
+}
+.label-item:hover {
+  background: var(--accent-bg);
+}
+.label-item.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.label-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.label-item .name {
+  flex: 1;
+  color: var(--text-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.label-item .del {
+  opacity: 0;
+  font-size: 12px;
+  color: var(--danger);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+}
+.label-item:hover .del {
+  opacity: 1;
+}
+.label-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.label-add input[type="color"] {
+  width: 38px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+/* ---- Annotation list ---- */
+.ann-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  margin-bottom: 3px;
+}
+.ann-item:hover {
+  background: var(--accent-bg);
+}
+.ann-item.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.ann-item .name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ann-item .del {
+  opacity: 0;
+  font-size: 12px;
+  color: var(--danger);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+}
+.ann-item:hover .del {
+  opacity: 1;
+}
+
+/* ---- Upload ---- */
+.uploader {
+  border: 1.5px dashed var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  margin-bottom: 14px;
+}
+.uploader.busy {
+  opacity: 0.7;
+}
+.progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--code-bg);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s;
+}
+
+/* ---- Toast ---- */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: var(--text-h);
+  color: var(--bg);
+  box-shadow: var(--shadow);
+  z-index: 100;
+  font-size: 14px;
+  /* Passive notification: never intercept pointer input, so it can't block
+     bounding-box drawing when it overlaps the canvas corner. */
+  pointer-events: none;
+}
+.toast.error {
+  background: var(--danger);
+  color: #fff;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.6;
+}
+.spin {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
