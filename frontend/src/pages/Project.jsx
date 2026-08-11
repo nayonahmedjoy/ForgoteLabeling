@@ -5,6 +5,7 @@ import Navbar from "../components/Navbar";
 import UploadImage from "../components/UploadImage";
 import ImageViewer from "../components/ImageViewer";
 import LabelPanel from "../components/LabelPanel";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 import { getProject } from "../api/projectApi";
 import { getImages, deleteImage, imageFileUrl } from "../api/imageApi";
@@ -33,6 +34,8 @@ export default function Project() {
   const [error, setError] = useState("");
   const [annLoading, setAnnLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  // The image awaiting delete confirmation (null = dialog closed).
+  const [pendingDeleteImage, setPendingDeleteImage] = useState(null);
 
   // ---- toast helper ----
   const notify = useCallback((message, kind = "ok") => {
@@ -134,9 +137,13 @@ export default function Project() {
   }
 
   async function handleDeleteImage(image) {
-    if (!window.confirm(`Delete "${image.original_filename || image.filename}"?`)) {
-      return;
-    }
+    // Opens the in-app confirmation; the delete itself runs in confirmDeleteImage.
+    setPendingDeleteImage(image);
+  }
+
+  async function confirmDeleteImage() {
+    const image = pendingDeleteImage;
+    if (!image) return;
     try {
       await deleteImage(projectId, image.id);
       setImages((prev) => {
@@ -149,6 +156,8 @@ export default function Project() {
       notify("Image deleted.");
     } catch (err) {
       notify(err.message || "Failed to delete image.", "error");
+    } finally {
+      setPendingDeleteImage(null);
     }
   }
 
@@ -466,6 +475,20 @@ export default function Project() {
           </div>
         </aside>
       </div>
+
+      {pendingDeleteImage ? (
+        <ConfirmDialog
+          title="Delete image"
+          message="This will permanently remove"
+          highlight={`“${
+            pendingDeleteImage.original_filename || pendingDeleteImage.filename
+          }”`}
+          note="and every bounding box drawn on it. This cannot be undone."
+          confirmText="Delete image"
+          onConfirm={confirmDeleteImage}
+          onCancel={() => setPendingDeleteImage(null)}
+        />
+      ) : null}
 
       {toast ? <div className={"toast " + toast.kind}>{toast.message}</div> : null}
     </>

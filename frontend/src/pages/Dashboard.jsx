@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import Navbar from "../components/Navbar";
 import ProjectCard from "../components/ProjectCard";
 import CreateProjectModal from "../components/CreateProjectModal";
+import ConfirmDialog from "../components/ConfirmDialog";
+import AboutSection from "../components/AboutSection";
 import {
   getProjects,
   createProject,
@@ -14,6 +16,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showModal, setShowModal] = useState(false);
+  // The project awaiting delete confirmation (null = dialog closed).
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   useEffect(() => {
     loadProjects();
@@ -39,20 +43,27 @@ export default function Dashboard() {
   }
 
   async function handleDelete(project) {
-    if (!window.confirm(`Delete "${project.name}"? This cannot be undone.`)) {
-      return;
-    }
+    // Opens the in-app confirmation; the actual delete runs in confirmDelete.
+    setPendingDelete(project);
+  }
+
+  async function confirmDelete() {
+    const project = pendingDelete;
+    if (!project) return;
     try {
       await deleteProject(project.id);
       setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      setPendingDelete(null);
     } catch (err) {
       setError(err.message || "Failed to delete project.");
+      setPendingDelete(null);
     }
   }
 
   return (
     <>
       <Navbar
+        contained
         right={
           <button className="primary" onClick={() => setShowModal(true)}>
             + Create Project
@@ -61,10 +72,16 @@ export default function Dashboard() {
       />
 
       <div className="page">
-        <div className="row between">
-          <h1>Projects</h1>
+        <div className="page-head">
+          <div className="titles">
+            <h1>Projects</h1>
+            {!loading && !error && projects.length > 0 ? (
+              <span className="page-sub">
+                {projects.length} {projects.length === 1 ? "project" : "projects"}
+              </span>
+            ) : null}
+          </div>
         </div>
-
         {loading ? (
           <div className="state">
             <span className="spin" /> Loading projects…
@@ -77,13 +94,12 @@ export default function Dashboard() {
             </div>
           </div>
         ) : projects.length === 0 ? (
-          <div className="state">
-            <p>No projects yet.</p>
-            <div style={{ marginTop: 12 }}>
-              <button className="primary" onClick={() => setShowModal(true)}>
-                Create your first project
-              </button>
-            </div>
+          <div className="empty">
+            <h2>No projects yet.</h2>
+            <p>Create your first dataset annotation project.</p>
+            <button className="primary" onClick={() => setShowModal(true)}>
+              + Create Project
+            </button>
           </div>
         ) : (
           <div className="project-grid">
@@ -104,6 +120,20 @@ export default function Dashboard() {
           onCreate={handleCreate}
         />
       ) : null}
+
+      {pendingDelete ? (
+        <ConfirmDialog
+          title="Delete project"
+          message="This will permanently remove"
+          highlight={`“${pendingDelete.name || "Untitled Project"}”`}
+          note="along with its images and annotations. This cannot be undone."
+          confirmText="Delete project"
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
+      ) : null}
+
+      <AboutSection />
     </>
   );
 }

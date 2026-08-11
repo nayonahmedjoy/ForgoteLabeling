@@ -16,7 +16,7 @@ export default function ProjectCard({ project, onDelete }) {
 
   return (
     <div className="card">
-      <div className="row between">
+      <div className="card-head">
         <h3>{project.name || "Untitled Project"}</h3>
         <span className="badge">{project.status || "active"}</span>
       </div>
@@ -26,9 +26,9 @@ export default function ProjectCard({ project, onDelete }) {
         <span>{project.annotations ?? 0} boxes</span>
       </div>
 
-      <div className="muted">Created {formatDate(project.created_at)}</div>
+      <div className="created">Created {formatDate(project.created_at)}</div>
 
-      <div className="row between" style={{ marginTop: 4 }}>
+      <div className="card-actions">
         <button
           className="primary small"
           onClick={() => navigate(`/project/${project.id}`)}
@@ -36,7 +36,7 @@ export default function ProjectCard({ project, onDelete }) {
           Open Project
         </button>
         <button
-          className="danger small"
+          className="danger-ghost small"
           onClick={() => onDelete(project)}
           title="Delete project"
         >
