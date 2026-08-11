@@ -1,11 +1,12 @@
+from io import BytesIO
 from pathlib import Path
-from shutil import copyfileobj
 from uuid import uuid4
 
 from fastapi import UploadFile
 
 from app.core import storage
 from app.core.config import settings
+from app.core.storage_backend import get_backend
 from app.models.image import Image
 from app.services.project.manager import manager as project_manager
 
@@ -19,6 +20,23 @@ class UploadError(Exception):
     """Raised when an uploaded file is rejected."""
 
 
+def _looks_like_allowed_image(data: bytes) -> bool:
+    """Content sniff for the allowed image types via their magic bytes.
+
+    A defence-in-depth check on top of the extension allow-list: it stops a
+    non-image payload wearing an image extension from being stored. Only applied
+    for the public (cloud) deployment so self-hosted v1.0.0 behavior is
+    unchanged.
+    """
+    if data[:3] == b"\xff\xd8\xff":  # JPEG
+        return True
+    if data[:8] == b"\x89PNG\r\n\x1a\n":  # PNG
+        return True
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":  # WebP (RIFF container)
+        return True
+    return False
+
+
 class UploadManager:
     """Image storage where the filesystem index (images.json) is the source
     of truth, so uploads survive a backend restart."""
@@ -26,7 +44,7 @@ class UploadManager:
     def _load(self, project_id: str) -> list[Image]:
         if not storage.is_safe_id(project_id):
             return []
-        raw = storage.read_json(storage.images_index_path(project_id), [])
+        raw = get_backend().read_doc(project_id, "images", [])
         images: list[Image] = []
         for item in raw:
             try:
@@ -36,8 +54,9 @@ class UploadManager:
         return images
 
     def _save(self, project_id: str, images: list[Image]) -> None:
-        storage.write_json(
-            storage.images_index_path(project_id),
+        get_backend().write_doc(
+            project_id,
+            "images",
             [img.model_dump(mode="json") for img in images],
         )
 
@@ -47,9 +66,9 @@ class UploadManager:
         suffix = Path(original).suffix.lower()
         candidate = f"{stem}{suffix}"
         existing = {img.filename for img in self._load(project_id)}
-        if candidate not in existing and not (
-            storage.images_dir(project_id) / candidate
-        ).exists():
+        if candidate not in existing and not get_backend().image_exists(
+            project_id, candidate
+        ):
             return candidate
         return f"{stem}_{uuid4().hex[:8]}{suffix}"
 
@@ -64,33 +83,66 @@ class UploadManager:
                 f"Allowed: {', '.join(sorted(settings.ALLOWED_IMAGE_EXTENSIONS))}."
             )
 
-        images_dir = storage.images_dir(project_id)
-        images_dir.mkdir(parents=True, exist_ok=True)
+        existing_images = self._load(project_id)
+
+        # Abuse protection applies ONLY to the public (cloud) deployment, so the
+        # local/self-hosted workflow keeps v1.0.0 behavior exactly: no size cap,
+        # no per-project quota, no content sniffing.
+        if settings.is_cloud:
+            if len(existing_images) >= settings.MAX_IMAGES_PER_PROJECT:
+                raise UploadError(
+                    f"Project image limit reached "
+                    f"({settings.MAX_IMAGES_PER_PROJECT} images)."
+                )
+
+            # Bounded read so a huge body cannot exhaust memory or fill the
+            # bucket; read one byte past the cap to detect an over-limit file.
+            data = file.file.read(settings.MAX_UPLOAD_BYTES + 1)
+            if len(data) > settings.MAX_UPLOAD_BYTES:
+                raise UploadError(
+                    f"Image too large: exceeds the "
+                    f"{settings.MAX_UPLOAD_BYTES} byte limit."
+                )
+
+            # The extension must not be the only thing standing between a
+            # non-image payload and storage.
+            if not _looks_like_allowed_image(data):
+                raise UploadError(
+                    f"File '{file.filename}' is not a valid JPG/PNG/WebP image."
+                )
+
+            # Per-project total-size quota.
+            used = sum(img.size for img in existing_images)
+            if used + len(data) > settings.MAX_PROJECT_BYTES:
+                raise UploadError(
+                    "Project storage limit reached "
+                    f"({settings.MAX_PROJECT_BYTES} bytes)."
+                )
+        else:
+            data = file.file.read()
 
         stored_name = self._unique_filename(project_id, file.filename or "image")
-        file_path = images_dir / stored_name
-
-        with open(file_path, "wb") as buffer:
-            copyfileobj(file.file, buffer)
 
         width = height = None
         if PILImage is not None:
             try:
-                with PILImage.open(file_path) as im:
+                with PILImage.open(BytesIO(data)) as im:
                     width, height = im.size
             except Exception:
                 pass  # dimensions are best-effort
 
+        stored_ref = get_backend().write_image(project_id, stored_name, data)
+
         image = Image(
             filename=stored_name,
             original_filename=file.filename or stored_name,
-            filepath=str(file_path),
-            size=file_path.stat().st_size,
+            filepath=stored_ref,
+            size=len(data),
             width=width,
             height=height,
         )
 
-        images = self._load(project_id)
+        images = existing_images
         images.append(image)
         self._save(project_id, images)
 
@@ -116,9 +168,9 @@ class UploadManager:
         if target is None:
             return False
 
-        path = Path(target.filepath)
-        if path.exists():
-            path.unlink()
+        # Remove the blob via the backend using the stored name (works for both
+        # a local path and a cloud object key).
+        get_backend().delete_image(project_id, target.filename)
 
         self._save(project_id, [img for img in images if img.id != image_id])
 

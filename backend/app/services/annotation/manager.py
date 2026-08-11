@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app.core import storage
+from app.core.storage_backend import get_backend
 from app.models.annotation import Annotation, AnnotationIn
 
 
@@ -18,7 +19,7 @@ class AnnotationManager:
     def _load(self, project_id: str) -> list[Annotation]:
         if not storage.is_safe_id(project_id):
             return []
-        raw = storage.read_json(storage.annotations_path(project_id), [])
+        raw = get_backend().read_doc(project_id, "annotations", [])
 
         annotations: list[Annotation] = []
         for item in raw:
@@ -31,8 +32,9 @@ class AnnotationManager:
         return annotations
 
     def _save(self, project_id: str, annotations: list[Annotation]) -> None:
-        storage.write_json(
-            storage.annotations_path(project_id),
+        get_backend().write_doc(
+            project_id,
+            "annotations",
             [a.model_dump(mode="json") for a in annotations],
         )
 

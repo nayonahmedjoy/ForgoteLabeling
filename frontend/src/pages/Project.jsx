@@ -6,6 +6,7 @@ import UploadImage from "../components/UploadImage";
 import ImageViewer from "../components/ImageViewer";
 import LabelPanel from "../components/LabelPanel";
 import ConfirmDialog from "../components/ConfirmDialog";
+import ExpiryBadge from "../components/ExpiryBadge";
 
 import { getProject } from "../api/projectApi";
 import { getImages, deleteImage, imageFileUrl } from "../api/imageApi";
@@ -336,9 +337,16 @@ export default function Project() {
       <Navbar
         crumb={crumb}
         right={
-          <button className="primary" onClick={handleExport}>
-            Export YOLO
-          </button>
+          <>
+            {/* Renders nothing unless the server gave this project a deadline. */}
+            <ExpiryBadge
+              seconds={project?.seconds_remaining}
+              onExpire={loadWorkspace}
+            />
+            <button className="primary" onClick={handleExport}>
+              Export YOLO
+            </button>
+          </>
         }
       />
 

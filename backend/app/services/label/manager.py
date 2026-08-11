@@ -1,4 +1,5 @@
 from app.core import storage
+from app.core.storage_backend import get_backend
 from app.models.label import DEFAULT_COLORS, Label
 
 
@@ -12,7 +13,7 @@ class LabelManager:
     def _load(self, project_id: str) -> list[Label]:
         if not storage.is_safe_id(project_id):
             return []
-        raw = storage.read_json(storage.labels_path(project_id), [])
+        raw = get_backend().read_doc(project_id, "labels", [])
         labels: list[Label] = []
         for item in raw:
             try:
@@ -22,8 +23,9 @@ class LabelManager:
         return labels
 
     def _save(self, project_id: str, labels: list[Label]) -> None:
-        storage.write_json(
-            storage.labels_path(project_id),
+        get_backend().write_doc(
+            project_id,
+            "labels",
             [label.model_dump(mode="json") for label in labels],
         )
 

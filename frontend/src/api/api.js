@@ -1,7 +1,14 @@
 import axios from "axios";
 
-// Base URL for the FastAPI backend. Can be overridden with a Vite env var.
-const baseURL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+// Base URL for the FastAPI backend.
+//   - Public deployment: set VITE_API_BASE_URL to the deployed backend origin
+//     (e.g. https://forgotelabeling-api.onrender.com) at build time.
+//   - Local dev: leave both unset and it falls back to the local backend.
+// VITE_API_URL is still honored for backward compatibility with v1.0.0 setups.
+const baseURL =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://127.0.0.1:8000";
 
 const api = axios.create({ baseURL });
 

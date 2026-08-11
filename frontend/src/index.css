@@ -32,7 +32,14 @@
   --danger: #d70015;
   --danger-hover: #e11d2b;
   --danger-bg: rgba(215, 0, 21, 0.07);
+  --danger-border: rgba(215, 0, 21, 0.28);
   --ok: #248a3d;
+
+  /* Amber, used only for the temporary-project notice and the countdown as it
+     approaches its deadline. Deliberately not part of the general palette. */
+  --warn: #b25000;
+  --warn-bg: rgba(191, 90, 0, 0.07);
+  --warn-border: rgba(191, 90, 0, 0.25);
 
   /* Soft, layered, low-contrast elevation. */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 1px rgba(0, 0, 0, 0.03);
@@ -91,7 +98,12 @@
     --danger: #ff453a;
     --danger-hover: #ff6961;
     --danger-bg: rgba(255, 69, 58, 0.14);
+    --danger-border: rgba(255, 69, 58, 0.4);
     --ok: #30d158;
+
+    --warn: #ff9f0a;
+    --warn-bg: rgba(255, 159, 10, 0.14);
+    --warn-border: rgba(255, 159, 10, 0.38);
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 8px 24px -8px rgba(0, 0, 0, 0.7);
@@ -451,6 +463,16 @@ code {
 .card .created {
   font-size: 12px;
   color: var(--text);
+  /* Laid out as a row so the expiry badge can sit opposite the date. The date
+     itself carries the dimming, not the container, so the badge keeps its own
+     contrast. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.card .created .created-date {
   opacity: 0.8;
 }
 /* Actions pinned to the bottom so buttons line up across cards of differing
@@ -964,8 +986,107 @@ button.danger-solid:hover {
   justify-content: space-between;
 }
 
-/* ---- Responsive ---- */
-@media (max-width: 860px) {
+/* ---- Temporary projects (public deployment only) ----
+   Both of these render only when the backend reports a project lifetime, so a
+   self-hosted instance never shows a single pixel of this. */
+
+/* Inline notice inside the create dialog. Framed rather than shouted: a warm
+   tinted panel with one icon, so the rule is impossible to miss but the dialog
+   still reads as a normal form. */
+.notice {
+  display: flex;
+  gap: 12px;
+  padding: 14px 15px;
+  border-radius: var(--r);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  text-align: left;
+}
+.notice-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  line-height: 1;
+  background: var(--warn);
+  color: var(--bg);
+}
+.notice-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.notice-text strong {
+  font-family: var(--heading);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+  letter-spacing: -0.01em;
+}
+.notice-text p {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+/* Remaining-lifetime indicator. Quiet by default; the tone escalates only as
+   the deadline nears, so it informs continuously without nagging. */
+.expiry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: color 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+}
+.expiry-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.expiry-calm {
+  color: var(--text);
+  opacity: 0.85;
+}
+.expiry-soon {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+}
+.expiry-urgent,
+.expiry-expired {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  font-weight: 500;
+}
+/* Only the final hour pulses — earlier states stay still. */
+.expiry-urgent .expiry-dot,
+.expiry-expired .expiry-dot {
+  animation: expiry-pulse 2s ease-in-out infinite;
+}
+@keyframes expiry-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .expiry-urgent .expiry-dot,
+  .expiry-expired .expiry-dot {
+    animation: none;
+  }
+}
+/* ---- Responsive ---- */@media (max-width: 860px) {
   .about-inner {
     flex-direction: column;
     gap: 24px;

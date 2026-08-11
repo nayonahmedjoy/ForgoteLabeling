@@ -1,8 +1,8 @@
-import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core import storage
 from app.core.config import settings
+from app.core.storage_backend import get_backend
 from app.models.project import Project
 
 
@@ -10,46 +10,108 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Coerce a stored timestamp to an aware UTC datetime.
+
+    Metadata written by older builds (and by local mode) may be naive; treating
+    those as UTC keeps comparisons total instead of raising at runtime.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 class ProjectManager:
-    """Projects persisted as folders under the upload directory."""
+    """Projects persisted as one metadata document plus per-project index docs.
+
+    Storage goes through the active backend (local filesystem in v1.0.0, Supabase
+    object storage for the public deployment), so the same manager code drives
+    both without changing the logical data model.
+
+    Public (cloud) projects are *temporary*: each is stamped server-side with an
+    ``expires_at`` at creation, is treated as already gone once that passes, and
+    is hard deleted by :meth:`cleanup_expired_projects`. Local/self-hosted mode
+    never stamps an expiry, so nothing there ever expires or is auto-deleted.
+    """
+
+    # -- expiry helpers -------------------------------------------------------
+
+    def _expiry_for(self, created_at: datetime) -> datetime | None:
+        """The server-side deadline for a project created at ``created_at``.
+
+        Returns ``None`` when expiry does not apply (local mode or TTL disabled),
+        which is what keeps self-hosted projects permanent.
+        """
+        if not settings.project_ttl_enabled:
+            return None
+        return created_at + timedelta(hours=settings.PROJECT_TTL_HOURS)
+
+    def is_expired(self, project: Project) -> bool:
+        """True when a project has passed its stored deadline.
+
+        Driven purely by the stored ``expires_at``, so the answer does not
+        change if the configured TTL is edited later, and a client clock has no
+        influence at all. Projects without a deadline (local mode) never expire.
+        """
+        expires_at = _as_utc(project.expires_at)
+        if expires_at is None:
+            return False
+        return _now() >= expires_at
 
     def create_project(self, name: str | None = None) -> Project:
+        created_at = _now()
         project = Project(
             name=(name.strip() if name and name.strip() else "Untitled Project"),
-            created_at=_now(),
-            updated_at=_now(),
+            created_at=created_at,
+            updated_at=created_at,
+            # Stamped from the server clock only — never from the request.
+            expires_at=self._expiry_for(created_at),
         )
 
-        # Create the standard project folder layout.
-        storage.images_dir(project.id).mkdir(parents=True, exist_ok=True)
-        storage.annotations_dir(project.id).mkdir(parents=True, exist_ok=True)
-        storage.thumbnails_dir(project.id).mkdir(parents=True, exist_ok=True)
-        storage.export_dir(project.id).mkdir(parents=True, exist_ok=True)
+        backend = get_backend()
 
-        # Initialize index files so the filesystem is always the source of truth.
-        storage.write_json(storage.images_index_path(project.id), [])
-        storage.write_json(storage.labels_path(project.id), [])
-        storage.write_json(storage.annotations_path(project.id), [])
+        # Create the project container (dirs locally; a no-op in object storage).
+        backend.init_project(project.id)
+
+        # Initialize the index documents so a freshly created project always has
+        # the same shape regardless of backend (source of truth is these docs).
+        backend.write_doc(project.id, "images", [])
+        backend.write_doc(project.id, "labels", [])
+        backend.write_doc(project.id, "annotations", [])
 
         self.save_project(project)
         return project
 
     def save_project(self, project: Project) -> None:
-        storage.write_json(
-            storage.metadata_path(project.id),
+        get_backend().write_doc(
+            project.id,
+            "metadata",
             project.model_dump(mode="json"),
         )
 
-    def _load(self, project_id: str) -> Project | None:
+    def _load(self, project_id: str, include_expired: bool = False) -> Project | None:
+        """Load a project's metadata.
+
+        Expired projects are reported as missing so that every read path (get,
+        list, images, labels, annotations, export) treats them as gone the moment
+        the deadline passes — even if the cleanup sweep has not run yet. The
+        sweep itself passes ``include_expired=True``, since it must still be able
+        to see what it is about to delete.
+        """
         if not storage.is_safe_id(project_id):
             return None
-        data = storage.read_json(storage.metadata_path(project_id), None)
+        data = get_backend().read_doc(project_id, "metadata", None)
         if data is None:
             return None
         try:
-            return Project(**data)
+            project = Project(**data)
         except Exception:
             return None
+        if not include_expired and self.is_expired(project):
+            return None
+        return project
 
     def exists(self, project_id: str) -> bool:
         """Cheap existence check that does NOT recompute counts.
@@ -86,13 +148,8 @@ class ProjectManager:
     def list_projects(self) -> list[Project]:
         projects: list[Project] = []
 
-        if not settings.UPLOAD_DIR.exists():
-            return projects
-
-        for folder in settings.UPLOAD_DIR.iterdir():
-            if not folder.is_dir():
-                continue
-            project = self._load(folder.name)
+        for project_id in get_backend().list_project_ids():
+            project = self._load(project_id)
             if project is not None:
                 projects.append(self._refresh_counts(project))
 
@@ -132,14 +189,82 @@ class ProjectManager:
         self.save_project(project)
         return self._refresh_counts(project)
 
+    def seconds_remaining(self, project: Project) -> int | None:
+        """Whole seconds until the project expires, computed on the server.
+
+        Returned alongside project payloads so the UI can render a countdown
+        without trusting the browser clock. ``None`` means the project has no
+        deadline (local/self-hosted mode).
+        """
+        expires_at = _as_utc(project.expires_at)
+        if expires_at is None:
+            return None
+        return max(0, int((expires_at - _now()).total_seconds()))
+
     def delete_project(self, project_id: str) -> bool:
         if not storage.is_safe_id(project_id):
             return False
-        project_path = storage.project_dir(project_id)
-        if not project_path.exists():
-            return False
-        shutil.rmtree(project_path)
-        return True
+        # An expired project is already "gone" as far as the API is concerned, so
+        # deleting it reports not-found; the cleanup sweep owns its removal.
+        if self._load(project_id) is None:
+            existing = self._load(project_id, include_expired=True)
+            if existing is not None and self.is_expired(existing):
+                return False
+        return get_backend().delete_project(project_id)
+
+    def cleanup_expired_projects(self) -> dict:
+        """Permanently delete every project past its deadline (cloud only).
+
+        Public projects are anonymous and temporary, so expired ones are swept to
+        keep the free object-storage quota bounded. This is a *simple* on-demand
+        sweep meant to be triggered by an external cron hitting the maintenance
+        endpoint — not a background job system.
+
+        Properties this relies on:
+
+        * **Cloud only.** A hard no-op in local mode and when the TTL is
+          disabled, so a self-hosted user's data is never destroyed.
+        * **Scoped.** Deletion goes through ``backend.delete_project(id)``, which
+          only ever touches keys under that one project's prefix, so a sweep can
+          never remove another project's objects.
+        * **Idempotent.** Only projects whose stored deadline has passed are
+          removed, and an already-deleted project simply is not listed on the
+          next run, so repeated calls converge and report ``deleted: 0``.
+        * **Complete.** The backend removes *all* of the project's objects
+          (metadata.json, images.json, labels.json, annotations.json and every
+          image blob); metadata is not dropped until the rest is handled, so a
+          partial failure leaves the project visible-as-expired and therefore
+          retryable rather than orphaning unreachable blobs.
+        """
+        if not settings.project_ttl_enabled:
+            return {"enabled": False, "deleted": 0, "checked": 0, "failed": 0}
+
+        backend = get_backend()
+
+        deleted = 0
+        checked = 0
+        failed = 0
+        for project_id in backend.list_project_ids():
+            # include_expired: the sweep must see exactly what normal reads hide.
+            project = self._load(project_id, include_expired=True)
+            if project is None:
+                continue
+            checked += 1
+            if not self.is_expired(project):
+                continue
+            if backend.delete_project(project_id):
+                deleted += 1
+            else:
+                # Left in place on purpose: it stays expired (invisible to the
+                # API) and will be retried by the next sweep.
+                failed += 1
+
+        return {
+            "enabled": True,
+            "deleted": deleted,
+            "checked": checked,
+            "failed": failed,
+        }
 
 
 manager = ProjectManager()

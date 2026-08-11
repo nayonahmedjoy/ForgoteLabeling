@@ -13,10 +13,12 @@ app = FastAPI(
 )
 
 # Explicit origins so credentialed requests are valid (a wildcard origin
-# combined with credentials is rejected by browsers).
+# combined with credentials is rejected by browsers). ``all_cors_origins``
+# adds the deployed frontend origin (FRONTEND_ORIGIN) to the local dev origins
+# when it is configured, so production never needs a wildcard.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.all_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

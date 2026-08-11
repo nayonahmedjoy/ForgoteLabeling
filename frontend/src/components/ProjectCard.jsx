@@ -1,5 +1,7 @@
 import { useNavigate } from "react-router-dom";
 
+import ExpiryBadge from "./ExpiryBadge";
+
 function formatDate(value) {
   if (!value) return "";
   const d = new Date(value);
@@ -11,7 +13,7 @@ function formatDate(value) {
   });
 }
 
-export default function ProjectCard({ project, onDelete }) {
+export default function ProjectCard({ project, onDelete, onExpire }) {
   const navigate = useNavigate();
 
   return (
@@ -26,7 +28,14 @@ export default function ProjectCard({ project, onDelete }) {
         <span>{project.annotations ?? 0} boxes</span>
       </div>
 
-      <div className="created">Created {formatDate(project.created_at)}</div>
+      <div className="created">
+        <span className="created-date">
+          Created {formatDate(project.created_at)}
+        </span>
+        {/* Renders nothing unless the server gave this project a deadline,
+            so self-hosted cards look exactly as they did in v1.0.0. */}
+        <ExpiryBadge seconds={project.seconds_remaining} onExpire={onExpire} />
+      </div>
 
       <div className="card-actions">
         <button

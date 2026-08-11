@@ -3,6 +3,7 @@ import zipfile
 from pathlib import Path
 
 from app.core import storage
+from app.core.storage_backend import get_backend
 from app.models.annotation import Annotation
 from app.models.image import Image
 from app.models.label import Label
@@ -42,6 +43,7 @@ class ExportManager:
         labels_out.mkdir(parents=True, exist_ok=True)
 
         class_index = self._yolo_class_index(labels)
+        backend = get_backend()
 
         # classes.txt (one class name per line, ordered by index).
         classes_file = build_dir / "classes.txt"
@@ -69,7 +71,6 @@ class ExportManager:
         used_stems: set[str] = set()
 
         for image in images:
-            src = Path(image.filepath)
             suffix = Path(image.filename).suffix
 
             stem = Path(image.filename).stem
@@ -80,8 +81,12 @@ class ExportManager:
                 counter += 1
             used_stems.add(unique_stem)
 
-            if src.exists():
-                shutil.copy2(src, images_out / f"{unique_stem}{suffix}")
+            # Read the image through the storage backend so the export works
+            # the same whether bytes live on the local disk (v1.0.0) or in cloud
+            # object storage. Missing images are skipped, exactly as before.
+            data = backend.read_image_bytes(project_id, image.filename)
+            if data is not None:
+                (images_out / f"{unique_stem}{suffix}").write_bytes(data)
 
             # One label file per image (empty file if no boxes).
             label_lines: list[str] = []

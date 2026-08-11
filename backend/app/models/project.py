@@ -15,6 +15,14 @@ class Project(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
     status: str = "active"
 
+    # Hard deletion deadline for temporary public projects, stamped by the
+    # server at creation time. ``None`` means "never expires", which is always
+    # the case in local/self-hosted mode. This is deliberately a stored field so
+    # the deadline is deterministic and auditable rather than recomputed from a
+    # setting that might change later. It is never accepted from a request body
+    # (see app.models.requests), so a client cannot set or extend it.
+    expires_at: datetime | None = None
+
     model: str | None = None
     export_format: str | None = None
 

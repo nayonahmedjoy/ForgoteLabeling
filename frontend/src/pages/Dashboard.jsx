@@ -10,6 +10,7 @@ import {
   createProject,
   deleteProject,
 } from "../api/projectApi";
+import { getConfig } from "../api/configApi";
 
 export default function Dashboard() {
   const [projects, setProjects] = useState([]);
@@ -18,9 +19,22 @@ export default function Dashboard() {
   const [showModal, setShowModal] = useState(false);
   // The project awaiting delete confirmation (null = dialog closed).
   const [pendingDelete, setPendingDelete] = useState(null);
+  // Deployment mode, asked of the backend: on the public deployment projects
+  // are temporary, self-hosted they are permanent. Defaults to "permanent" so a
+  // failed/older /config call never invents a warning that isn't true.
+  const [config, setConfig] = useState({
+    temporary_projects: false,
+    project_ttl_hours: null,
+  });
 
   useEffect(() => {
     loadProjects();
+    // Config failure is non-fatal: the app works, it just shows no TTL notice.
+    getConfig()
+      .then((data) => {
+        if (data && typeof data === "object") setConfig(data);
+      })
+      .catch(() => {});
   }, []);
 
   async function loadProjects() {
@@ -108,6 +122,9 @@ export default function Dashboard() {
                 key={project.id}
                 project={project}
                 onDelete={handleDelete}
+                // A finished countdown proves nothing on its own — re-ask the
+                // server, which is the only authority on what still exists.
+                onExpire={loadProjects}
               />
             ))}
           </div>
@@ -118,6 +135,8 @@ export default function Dashboard() {
         <CreateProjectModal
           onClose={() => setShowModal(false)}
           onCreate={handleCreate}
+          temporary={!!config.temporary_projects}
+          ttlHours={config.project_ttl_hours}
         />
       ) : null}
 
