@@ -17,8 +17,11 @@ services:
     envVars:
       - key: STORAGE_BACKEND
         value: cloud
+      # Must match the bucket you created in the Supabase dashboard. This is
+      # also the application default, so local cloud-mode runs and the deployed
+      # service read and write the same bucket.
       - key: SUPABASE_BUCKET
-        value: forgotelabeling
+        value: projects
       - key: PROJECT_TTL_HOURS
         value: "30"
       # --- secrets / per-deployment values: set in the Render dashboard ---

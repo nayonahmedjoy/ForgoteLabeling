@@ -37,7 +37,8 @@ It runs entirely on your machine. Every project is a plain folder on disk — im
 - **Bounding-box editor** — draw, move, resize, select, and delete boxes on a canvas overlay.
 - **Keyboard-first workflow** — `←` / `→` to move between images, `Delete` to remove the selected box.
 - **Durable persistence** — annotations are written atomically and survive reloads and restarts.
-- **YOLO export** — a zipped dataset with `images/`, `labels/`, and `classes.txt`, ready for training.
+- **YOLO export** — a zipped dataset with `images/`, `labels/`, `data.yaml`, and a deterministic train/val split, ready for training.
+- **COCO export** — the same dataset as `annotations/instances.json` in standard COCO detection format.
 - **Honest reporting** — boxes that can't be exported are listed in `unlabeled.txt` rather than silently dropped.
 
 ## Tech Stack
@@ -47,7 +48,7 @@ It runs entirely on your machine. Every project is a plain folder on disk — im
 | Frontend | React 19, Vite, React Router, Axios |
 | Backend  | FastAPI, Pydantic v2, Uvicorn       |
 | Storage  | JSON files on disk (no database)    |
-| Export   | YOLO (normalized center format)     |
+| Export   | YOLO + COCO                         |
 | Testing  | pytest + Starlette `TestClient`     |
 
 ## Requirements
@@ -107,11 +108,13 @@ Open **http://localhost:5173**.
 3. **Add labels** on the right — each gets a color, and their order fixes the YOLO class index.
 4. **Select a label**, then drag on the image to draw a box. Drag inside a box to move it, or grab a corner to resize.
 5. **Navigate** with `←` / `→`; press `Delete` to remove the selected box.
-6. **Export YOLO** from the top bar to download the finished dataset.
+6. **Export YOLO** or **Export COCO** from the top bar to download the finished dataset.
 
 Annotations save as you work — there is no save button.
 
 ## Export Format
+
+### YOLO
 
 `Export YOLO` downloads a zip laid out as:
 
@@ -119,6 +122,9 @@ Annotations save as you work — there is no save button.
 dataset/
 ├── images/          # your images, copied as-is
 ├── labels/          # one .txt per image, matched by filename stem
+├── data.yaml        # Ultralytics dataset config (path/train/val/nc/names)
+├── train.txt        # 80% of the images, one relative path per line
+├── val.txt          # the remaining 20%
 ├── classes.txt      # class names, one per line, in index order
 └── unlabeled.txt    # only written when some boxes could not be exported
 ```
@@ -132,6 +138,19 @@ Each line in a label file is a normalized, center-anchored box:
 All four coordinates are floats in `0..1` relative to the image dimensions, which is the standard YOLO convention.
 
 A box is omitted only when it has no label or points at a label that no longer exists. Those cases are counted per image in `unlabeled.txt`, so an incomplete dataset is always visible rather than silent. Images with no boxes still get an empty label file, as YOLO expects.
+
+### COCO
+
+`Export COCO` downloads a zip laid out as:
+
+```
+dataset/
+├── images/                    # your images, copied as-is
+└── annotations/
+    └── instances.json         # standard COCO detection annotations
+```
+
+`instances.json` holds the usual three arrays. Each image carries `id`, `file_name`, `width`, and `height`; each annotation carries `id`, `image_id`, `category_id`, `bbox`, `area`, and `iscrowd`; categories come from the project's labels, numbered from `1` (COCO reserves `0`). Unlike YOLO, `bbox` is `[x, y, width, height]` in **absolute pixels** with `(x, y)` at the top-left corner, so the stored normalized boxes are scaled by each image's own dimensions.
 
 ## Project Structure
 
@@ -261,7 +280,7 @@ Every project created on the public deployment is **permanently deleted exactly 
 
 When a project expires, everything belonging to it is removed from Supabase Storage — the uploaded images, the annotations, the label definitions, the project metadata, and every generated index document. Nothing is archived, hidden, or recoverable; expiry is a real deletion, not a flag. Once the sweep has run there is no way to restore the project, and its link will return "not found".
 
-**Export your YOLO dataset before the deadline.** The 30-hour clock starts at creation and cannot be extended, paused, or reset — reopening or editing a project does not buy more time. Each project card and the project page show the remaining lifetime (for example `Expires in 29h 42m`), and the indicator becomes more prominent as the deadline approaches. Use **Export → YOLO** to download your dataset; the downloaded zip is yours permanently and is unaffected by expiry.
+**Export your YOLO dataset before the deadline.** The 30-hour clock starts at creation and cannot be extended, paused, or reset — reopening or editing a project does not buy more time. Each project card and the project page show the remaining lifetime (for example `Expires in 29h 42m`), and the indicator becomes more prominent as the deadline approaches. Use **Export YOLO** or **Export COCO** to download your dataset; the downloaded zip is yours permanently and is unaffected by expiry.
 
 The deadline is enforced by the server, not the browser. The expiry timestamp is generated server-side at creation time (`expires_at = created_at + PROJECT_TTL_HOURS`), stored in the project metadata, and never accepted from a client — so a modified request or a wrong system clock cannot extend a project's life. Past the deadline the project stops being listed and every project-scoped endpoint (open, images, labels, annotations, export) responds `404`, whether or not the cleanup sweep has run yet.
 
@@ -281,7 +300,7 @@ Built and working today: the full manual annotation loop described above.
 
 Under consideration:
 
-- COCO and Pascal VOC export
+- Pascal VOC export
 - Zoom and pan in the editor
 - Undo / redo
 - Optional AI-assisted pre-labeling (the `/predict` endpoint is currently an honest `501` stub)

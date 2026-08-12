@@ -440,6 +440,38 @@ def export_yolo(project_id: str):
     )
 
 
+@router.get("/projects/{project_id}/export/coco")
+def export_coco(project_id: str):
+    """Export the project as a COCO dataset (images + annotations/instances.json).
+
+    Deliberately the same shape as the YOLO endpoint above — same lookups, same
+    archive delivery, same cloud-only scratch cleanup — so both formats behave
+    identically from the frontend's point of view.
+    """
+    project = project_manager.get_project(project_id)
+    if project is None:
+        return error("Project not found.", 404)
+
+    images = upload_manager.list_images(project_id)
+    annotations = annotation_manager.list_all(project_id)
+    labels = label_manager.list_labels(project_id)
+
+    zip_path = export_manager.export_coco(project_id, images, annotations, labels)
+
+    safe_name = (project.name or "dataset").strip().replace(" ", "_") or "dataset"
+
+    background = None
+    if settings.is_cloud:
+        background = BackgroundTask(_cleanup_export, zip_path)
+
+    return FileResponse(
+        path=zip_path,
+        filename=f"{safe_name}_coco.zip",
+        media_type="application/zip",
+        background=background,
+    )
+
+
 def _cleanup_export(zip_path: Path) -> None:
     """Remove a generated export archive and its build directory (cloud mode)."""
     zip_path = Path(zip_path)

@@ -17,7 +17,7 @@ import {
   updateAnnotation,
   deleteAnnotation,
 } from "../api/annotationApi";
-import { yoloExportUrl } from "../api/exportApi";
+import { downloadExport } from "../api/exportApi";
 
 export default function Project() {
   const { id: projectId } = useParams();
@@ -37,6 +37,10 @@ export default function Project() {
   const [toast, setToast] = useState(null);
   // The image awaiting delete confirmation (null = dialog closed).
   const [pendingDeleteImage, setPendingDeleteImage] = useState(null);
+  // The export format currently being built/downloaded ("yolo" | "coco"), or
+  // null when idle. Holding the format rather than a boolean lets only the
+  // clicked button show its spinner while both stay disabled.
+  const [exporting, setExporting] = useState(null);
 
   // ---- toast helper ----
   const notify = useCallback((message, kind = "ok") => {
@@ -267,18 +271,23 @@ export default function Project() {
   }
 
   // ---- export ----
-  function handleExport() {
+  async function handleExport(format) {
+    if (exporting) return; // building an archive twice at once helps nobody
     if (images.length === 0) {
       notify("Add images before exporting.", "error");
       return;
     }
-    const a = document.createElement("a");
-    a.href = yoloExportUrl(projectId);
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    notify("Preparing YOLO export…");
+    const upper = format.toUpperCase();
+    setExporting(format);
+    notify(`Building ${upper} export…`);
+    try {
+      await downloadExport(projectId, format, project?.name || "dataset");
+      notify("Export ready — check your downloads.");
+    } catch (err) {
+      notify(err.message || "Failed to export dataset.", "error");
+    } finally {
+      setExporting(null);
+    }
   }
 
   // ---- keyboard: Delete removes selected box, arrows switch images ----
@@ -343,8 +352,33 @@ export default function Project() {
               seconds={project?.seconds_remaining}
               onExpire={loadWorkspace}
             />
-            <button className="primary" onClick={handleExport}>
-              Export YOLO
+            <button
+              className="primary"
+              onClick={() => handleExport("yolo")}
+              disabled={!!exporting}
+              title="Download this project as a YOLO dataset (ZIP)"
+            >
+              {exporting === "yolo" ? (
+                <>
+                  <span className="spin" /> Exporting…
+                </>
+              ) : (
+                "Export YOLO"
+              )}
+            </button>
+            <button
+              className="primary"
+              onClick={() => handleExport("coco")}
+              disabled={!!exporting}
+              title="Download this project as a COCO dataset (ZIP)"
+            >
+              {exporting === "coco" ? (
+                <>
+                  <span className="spin" /> Exporting…
+                </>
+              ) : (
+                "Export COCO"
+              )}
             </button>
           </>
         }

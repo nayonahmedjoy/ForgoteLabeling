@@ -59,12 +59,22 @@ def isolated_storage(tmp_path, monkeypatch):
     attributes on the shared ``settings`` singleton; because every module holds
     the same object by reference, the change is visible everywhere at once.
     """
+    from app.core import storage_backend
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(settings, "EXPORT_DIR", tmp_path / "exports")
     monkeypatch.setattr(settings, "PROJECT_DIR", tmp_path / "projects")
     monkeypatch.setattr(settings, "CHECKPOINT_DIR", tmp_path / "checkpoints")
+
+    # Pin the baseline to local mode. ``Settings`` reads backend/.env, so a
+    # developer who has STORAGE_BACKEND=cloud there would otherwise run this
+    # whole suite against real Supabase. Cloud tests opt in explicitly via the
+    # ``cloud`` fixture, which installs an in-memory backend first.
+    monkeypatch.setattr(settings, "STORAGE_BACKEND", "local")
+    # Drop the cached backend so it is rebuilt for the pinned mode (monkeypatch
+    # restores the previous value, keeping tests independent of each other).
+    monkeypatch.setattr(storage_backend, "_backend", None)
 
     (tmp_path / "uploads").mkdir(parents=True, exist_ok=True)
     return tmp_path

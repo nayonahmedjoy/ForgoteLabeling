@@ -22,6 +22,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Browsers hide every response header from cross-origin JS unless it is
+    # named here. The dataset export is fetched over XHR so the UI can show a
+    # loading state, and it reads the download filename from this header; the
+    # frontend falls back to a generated name, but exposing it keeps the served
+    # filename authoritative. Response *bodies* are unaffected.
+    expose_headers=["Content-Disposition"],
 )
 
 

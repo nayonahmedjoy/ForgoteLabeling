@@ -544,3 +544,274 @@ def test_supabase_object_url_and_key_layout(monkeypatch):
 
     # Missing doc returns the provided default.
     assert backend.read_doc("pid", "labels", []) == []
+
+
+# ---------------------------------------------------------------------------
+# Supabase "object does not exist" handling (regression: upload 500)
+#
+# Supabase Storage answers a GET for an absent key with 400 + a JSON body whose
+# statusCode is "404". _get_bytes used to treat that as a hard error, so the
+# existence probe in _unique_filename raised HTTPStatusError and the very first
+# upload of any image returned 500. Missing must read as absent; every other
+# failure must still surface.
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    """Minimal stand-in for httpx.Response covering what _get_bytes touches."""
+
+    def __init__(self, status_code, json_body=None, content=b"", text=""):
+        self.status_code = status_code
+        self._json = json_body
+        self.content = content
+        self.text = text or (content.decode("utf-8", "replace") if content else "")
+
+    def json(self):
+        if self._json is None:
+            raise ValueError("no json body")
+        return self._json
+
+    def raise_for_status(self):
+        import httpx
+
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError(
+                f"Client error '{self.status_code}'",
+                request=httpx.Request("GET", "https://ref.supabase.co/x"),
+                response=httpx.Response(self.status_code),
+            )
+
+    # _delete_keys goes through client.request(...) rather than client.get.
+    def request(self, *args, **kwargs):
+        return self
+
+
+def _supabase(monkeypatch, response):
+    """A SupabaseStorageBackend whose HTTP calls return ``response``, no I/O."""
+    from app.core.config import settings
+    from app.core.storage_backend import SupabaseStorageBackend
+
+    monkeypatch.setattr(settings, "SUPABASE_URL", "https://ref.supabase.co")
+    monkeypatch.setattr(settings, "SUPABASE_SERVICE_KEY", "svc-key")
+    monkeypatch.setattr(settings, "SUPABASE_BUCKET", "projects")
+
+    backend = SupabaseStorageBackend()
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, url):
+            return response
+
+        # _delete_keys uses client.request("DELETE", ...).
+        def request(self, *args, **kwargs):
+            return response
+
+    monkeypatch.setattr(backend, "_client", lambda: _Client())
+    return backend
+
+
+def test_missing_object_400_envelope_reads_as_absent(monkeypatch):
+    """The exact response Supabase returned in the reported traceback."""
+    backend = _supabase(
+        monkeypatch,
+        _FakeResponse(
+            400,
+            {"statusCode": "404", "error": "not_found", "message": "Object not found"},
+        ),
+    )
+
+    assert backend.image_exists("pid", "car.jpg") is False
+    assert backend.read_image_bytes("pid", "car.jpg") is None
+    # Documents not written yet must still fall back to their default.
+    assert backend.read_doc("pid", "labels", []) == []
+
+
+def test_missing_object_plain_404_still_reads_as_absent(monkeypatch):
+    backend = _supabase(monkeypatch, _FakeResponse(404, {"message": "Not found"}))
+    assert backend.image_exists("pid", "car.jpg") is False
+
+
+def test_existing_object_is_still_detected(monkeypatch):
+    backend = _supabase(monkeypatch, _FakeResponse(200, None, b"\x89PNG\r\n\x1a\n"))
+    assert backend.image_exists("pid", "car.jpg") is True
+    assert backend.read_image_bytes("pid", "car.jpg") == b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        # Bad/expired service key.
+        _FakeResponse(401, {"statusCode": "401", "message": "Invalid JWT"}),
+        _FakeResponse(403, {"statusCode": "403", "message": "Unauthorized"}),
+        # Wrong bucket name: same 404-in-a-400 shape, but a misconfiguration.
+        _FakeResponse(
+            400,
+            {"statusCode": "404", "error": "not_found", "message": "Bucket not found"},
+        ),
+        # Malformed request with a non-not-found reason.
+        _FakeResponse(400, {"statusCode": "400", "message": "Invalid key"}),
+        # A 400 that is not even JSON (proxy/CDN error page).
+        _FakeResponse(400, None, b"<html>Bad Request</html>"),
+        # Server-side failure.
+        _FakeResponse(500, {"message": "Internal Server Error"}),
+    ],
+)
+def test_real_supabase_errors_are_not_swallowed(monkeypatch, response):
+    import httpx
+
+    backend = _supabase(monkeypatch, response)
+    with pytest.raises(httpx.HTTPStatusError):
+        backend.image_exists("pid", "car.jpg")
+
+
+def test_upload_still_generates_unique_names_on_collision(cloud, png_bytes):
+    """Collision handling is unchanged: same filename twice => distinct keys."""
+    client, fake = cloud
+    project = make_project(client, "Collisions")
+    pid = project["id"]
+
+    first = upload_png(client, pid, "car.jpg", png_bytes)
+    second = upload_png(client, pid, "car.jpg", png_bytes)
+
+    assert first["filename"] == "car.jpg"
+    assert second["filename"] != first["filename"]
+    assert second["filename"].startswith("car_")
+    assert second["filename"].endswith(".jpg")
+    # Both blobs exist independently under the project's prefix.
+    assert fake.image_exists(pid, first["filename"]) is True
+    assert fake.image_exists(pid, second["filename"]) is True
+    assert len(client.get(f"/projects/{pid}/images").json()["data"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Image deletion in cloud mode
+#
+# The service layer already removed the index entry and the annotations; what
+# needed checking was that the *blob* really goes, that a failure is reported
+# instead of silently leaving an orphan, and that the blast radius is one object.
+# ---------------------------------------------------------------------------
+
+def test_delete_image_removes_blob_index_and_annotations(cloud, png_bytes):
+    client, fake = cloud
+    project = make_project(client, "Deletions")
+    pid = project["id"]
+
+    keep = upload_png(client, pid, "keep.png", png_bytes)
+    doomed = upload_png(client, pid, "doomed.png", png_bytes)
+    label = make_label(client, pid, "car")
+    box = {"x": 1, "y": 2, "width": 3, "height": 4}
+    make_annotation(client, pid, doomed["id"], box, label=label)
+    make_annotation(client, pid, keep["id"], box, label=label)
+
+    resp = client.delete(f"/projects/{pid}/images/{doomed['id']}")
+    assert resp.status_code == 200
+
+    # 1. the object itself is gone from storage, 2. so is the index entry
+    assert fake.image_exists(pid, doomed["filename"]) is False
+    listed = client.get(f"/projects/{pid}/images").json()["data"]
+    assert [img["id"] for img in listed] == [keep["id"]]
+
+    # 3. its annotations are gone; the sibling's survive
+    remaining = client.get(f"/projects/{pid}/images/{keep['id']}/annotations")
+    assert len(remaining.json()["data"]) == 1
+    assert fake.read_doc(pid, "annotations", []) != []
+
+    # 5. the sibling blob is untouched and still servable
+    assert fake.image_exists(pid, keep["filename"]) is True
+    assert client.get(f"/projects/{pid}/images/{keep['id']}/file").status_code == 200
+
+    # 6. the project itself survives, with consistent counts
+    body = client.get(f"/projects/{pid}").json()["data"]
+    assert body["images"] == 1
+    assert body["annotations"] == 1
+    # 7. nothing orphaned: the only image key left belongs to the survivor
+    assert [name for (p, name) in fake.images if p == pid] == [keep["filename"]]
+
+
+def test_deleted_image_stays_deleted_and_is_unservable(cloud, png_bytes):
+    """What a page refresh would see, plus a repeated delete."""
+    client, fake = cloud
+    project = make_project(client, "Persistence")
+    pid = project["id"]
+    image = upload_png(client, pid, "gone.png", png_bytes)
+
+    assert client.delete(f"/projects/{pid}/images/{image['id']}").status_code == 200
+
+    # Re-reading from storage (what a refresh does) still shows it gone.
+    assert client.get(f"/projects/{pid}/images").json()["data"] == []
+    assert client.get(f"/projects/{pid}/images/{image['id']}").status_code == 404
+    assert client.get(f"/projects/{pid}/images/{image['id']}/file").status_code == 404
+    # Deleting twice is a clean 404, not a 500.
+    assert client.delete(f"/projects/{pid}/images/{image['id']}").status_code == 404
+
+
+def test_delete_image_failure_leaves_no_orphan(cloud, png_bytes, monkeypatch):
+    """A failed blob delete must keep the index entry so the user can retry."""
+    client, fake = cloud
+    project = make_project(client, "Failure")
+    pid = project["id"]
+    image = upload_png(client, pid, "stuck.png", png_bytes)
+
+    def boom(project_id, stored_name):
+        raise RuntimeError("supabase unavailable")
+
+    monkeypatch.setattr(fake, "delete_image", boom)
+
+    with pytest.raises(RuntimeError):
+        client.delete(f"/projects/{pid}/images/{image['id']}")
+
+    # The entry survived, so the image is still reachable and retryable —
+    # rather than an unreachable object stranded in the bucket.
+    monkeypatch.undo()
+    assert len(client.get(f"/projects/{pid}/images").json()["data"]) == 1
+    assert client.delete(f"/projects/{pid}/images/{image['id']}").status_code == 200
+    assert fake.image_exists(pid, image["filename"]) is False
+
+
+def test_supabase_delete_image_targets_exactly_one_key(monkeypatch):
+    """The real adapter deletes one object, and cannot widen its own prefix."""
+    from app.core.config import settings
+    from app.core.storage_backend import SupabaseStorageBackend
+
+    monkeypatch.setattr(settings, "SUPABASE_URL", "https://ref.supabase.co")
+    monkeypatch.setattr(settings, "SUPABASE_SERVICE_KEY", "svc-key")
+    monkeypatch.setattr(settings, "SUPABASE_BUCKET", "projects")
+    backend = SupabaseStorageBackend()
+
+    batches: list[list[str]] = []
+    monkeypatch.setattr(
+        backend, "_delete_keys", lambda keys: (batches.append(list(keys)), len(keys))[1]
+    )
+
+    backend.delete_image("pid", "car.jpg")
+    assert batches == [["pid/images/car.jpg"]]
+
+    # A traversal attempt is refused outright rather than deleting a wider
+    # prefix (which would take the whole project's objects).
+    batches.clear()
+    for hostile in ("../..", "../metadata.json", "a/b", "", "x\x00y"):
+        backend.delete_image("pid", hostile)
+    backend.delete_image("../other", "car.jpg")
+    assert batches == []
+
+
+def test_delete_keys_tolerates_already_deleted_object(monkeypatch):
+    """Re-deleting a gone object succeeds; real errors still raise."""
+    import httpx
+
+    missing = _FakeResponse(
+        400, {"statusCode": "404", "error": "not_found", "message": "Object not found"}
+    )
+    backend = _supabase(monkeypatch, missing)
+    assert backend._delete_keys(["pid/images/gone.png"]) == 1  # no raise
+
+    denied = _supabase(monkeypatch, _FakeResponse(401, {"message": "Invalid JWT"}))
+    with pytest.raises(httpx.HTTPStatusError):
+        denied._delete_keys(["pid/images/gone.png"])
+
+    # An empty batch never touches the network.
+    assert backend._delete_keys([]) == 0

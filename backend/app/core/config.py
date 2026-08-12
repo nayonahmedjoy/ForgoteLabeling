@@ -34,14 +34,14 @@ class Settings(BaseSettings):
     #             used for self-hosting and the whole test suite).
     # "cloud"  -> objects in Supabase Storage, for the ephemeral-disk public
     #             deployment. Selected only when STORAGE_BACKEND=cloud is set.
-    STORAGE_BACKEND: str = "local"
+    STORAGE_BACKEND: str = "cloud"
 
     # Supabase Storage config (only required when STORAGE_BACKEND=cloud).
     # SUPABASE_SERVICE_KEY is a secret and must come from the environment; it is
     # used server-side only and never sent to the browser.
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_KEY: str = ""
-    SUPABASE_BUCKET: str = "forgotelabeling"
+    SUPABASE_BUCKET: str = "projects"
 
     # Shared secret guarding the on-demand cleanup endpoint. When empty (the
     # default, and always in local mode) the endpoint is disabled entirely, so a

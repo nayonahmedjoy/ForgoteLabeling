@@ -1,19 +1,3 @@
-"""Centralized filesystem layout and JSON helpers.
-
-Every service derives its paths from here so storage is consistent and
-independent of the current working directory. The layout for one project:
-
-    uploads/<project_id>/
-        metadata.json          project metadata
-        images.json            persistent image index (source of truth)
-        labels.json            project labels / classes
-        images/                image files
-        thumbnails/            reserved for future thumbnails
-        export/                generated export artifacts
-        annotations/
-            annotations.json   bounding-box annotations for the project
-"""
-
 import json
 import tempfile
 from pathlib import Path

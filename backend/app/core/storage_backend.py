@@ -1,30 +1,3 @@
-"""Storage backend abstraction.
-
-v1.0.0 persisted everything as JSON + image files on the local filesystem via
-the flat helpers in :mod:`app.core.storage`. For the public web deployment the
-host (Render free tier) has only an *ephemeral* disk, so persistent data must
-live in external object storage (Supabase Storage).
-
-To support both without duplicating the manager/M2 logic, all persistence now
-goes through a small ``StorageBackend`` interface with two concerns:
-
-  * **JSON documents** — the four per-project files (``metadata``/``images``/
-    ``labels``/``annotations``) that the managers already read and write.
-  * **image blobs** — the raw uploaded image bytes.
-
-``LocalStorageBackend`` simply delegates to the existing
-:mod:`app.core.storage` functions, so local/self-hosted behavior is byte-for
--byte identical to v1.0.0 (and the whole test suite, which never sets
-``STORAGE_BACKEND=cloud``, exercises exactly this path).
-
-``SupabaseStorageBackend`` maps the same logical keys onto Supabase Storage
-objects over its REST API. The service-role key is used server-side only and is
-never exposed to the browser.
-
-Keep this abstraction deliberately small: it is a persistence seam, not a
-general-purpose VFS.
-"""
-
 from __future__ import annotations
 
 import json
@@ -57,6 +30,41 @@ _DOC_KEYS = {
 def _guess_media_type(filename: str) -> str:
     media_type, _ = mimetypes.guess_type(filename)
     return media_type or "application/octet-stream"
+
+
+def _is_missing_object(resp) -> bool:
+    """True only when Supabase is reporting "this object does not exist".
+
+    A plain 404 is the obvious case, but Supabase Storage also answers a GET for
+    an absent key with **400 Bad Request** carrying a JSON body such as::
+
+        {"statusCode": "404", "error": "not_found", "message": "Object not found"}
+
+    Treating every 400 as "missing" would hide real faults, so the body is
+    inspected and only that specific not-found envelope counts. Anything else —
+    a missing bucket, a bad service key, a malformed request — falls through to
+    ``raise_for_status()`` and is reported as before.
+    """
+    if resp.status_code == 404:
+        return True
+    if resp.status_code != 400:
+        return False
+    try:
+        body = resp.json()
+    except ValueError:  # non-JSON 400 => a real error, not a missing object
+        return False
+    if not isinstance(body, dict):
+        return False
+    detail = f"{body.get('error', '')} {body.get('message', '')}".lower()
+    # A missing *bucket* answers with the same 400/statusCode:404 envelope, but
+    # that is a deployment misconfiguration rather than an absent image, so it
+    # must keep raising instead of silently reading as "no such object".
+    if "bucket" in detail:
+        return False
+    # Supabase sends the true status as a string in the body of these 400s.
+    if str(body.get("statusCode", "")) == "404":
+        return True
+    return "not_found" in detail.replace(" ", "_")
 
 
 class StorageBackend(ABC):
@@ -218,7 +226,9 @@ class SupabaseStorageBackend(StorageBackend):
     def _get_bytes(self, key: str) -> bytes | None:
         with self._client() as client:
             resp = client.get(self._object_url(key))
-        if resp.status_code == 404:
+        # "Missing" is a normal answer here: callers use it to test existence
+        # and to fall back to defaults for documents not written yet.
+        if _is_missing_object(resp):
             return None
         resp.raise_for_status()
         return resp.content
@@ -234,7 +244,13 @@ class SupabaseStorageBackend(StorageBackend):
         resp.raise_for_status()
 
     def _delete_keys(self, keys: list[str]) -> int:
-        """Permanently delete the given object keys. Returns the count removed."""
+        """Permanently delete the given object keys. Returns the count removed.
+
+        An object that is already gone is treated as success: deletion has to be
+        safe to retry (the TTL sweep re-runs, and a failed image delete leaves a
+        stale index entry the user must be able to clear). Every other failure —
+        bad key, missing bucket, network error — still raises.
+        """
         if not keys:
             return 0
         with self._client() as client:
@@ -243,7 +259,8 @@ class SupabaseStorageBackend(StorageBackend):
                 f"{self._base}/storage/v1/object/{self._bucket}",
                 json={"prefixes": keys},
             )
-        resp.raise_for_status()
+        if not _is_missing_object(resp):
+            resp.raise_for_status()
         return len(keys)
 
     def _list_keys(self, prefix: str) -> list[str]:
@@ -349,12 +366,18 @@ class SupabaseStorageBackend(StorageBackend):
         return self._get_bytes(f"{project_id}/images/{stored_name}")
 
     def delete_image(self, project_id: str, stored_name: str) -> None:
-        with self._client() as client:
-            client.request(
-                "DELETE",
-                f"{self._base}/storage/v1/object/{self._bucket}",
-                json={"prefixes": [f"{project_id}/images/{stored_name}"]},
-            )
+        """Delete exactly one image object.
+
+        Reuses ``_delete_keys`` rather than issuing its own request, so this
+        shares the error handling and the already-deleted tolerance with the
+        project sweep. Two guards keep the blast radius at one object: the ids
+        are validated, and the key is built from a single path segment, so a
+        crafted ``stored_name`` cannot climb up to the project prefix and take
+        the whole project's objects with it.
+        """
+        if not storage.is_safe_id(project_id) or not storage.is_safe_id(stored_name):
+            return
+        self._delete_keys([f"{project_id}/images/{stored_name}"])
 
     def image_response(self, project_id: str, image) -> Response:
         data = self.read_image_bytes(project_id, image.filename)

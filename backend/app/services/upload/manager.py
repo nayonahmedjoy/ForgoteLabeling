@@ -168,8 +168,10 @@ class UploadManager:
         if target is None:
             return False
 
-        # Remove the blob via the backend using the stored name (works for both
-        # a local path and a cloud object key).
+        # Blob first, index second — deliberately. The index is what makes an
+        # image reachable, so if the blob delete fails (it raises for real cloud
+        # errors) the entry survives and the user can retry; dropping the index
+        # first would strand an unreachable object in the bucket forever.
         get_backend().delete_image(project_id, target.filename)
 
         self._save(project_id, [img for img in images if img.id != image_id])
