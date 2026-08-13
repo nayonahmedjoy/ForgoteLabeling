@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import secrets
 
 from app.core import storage
 from app.core.config import settings
@@ -60,7 +61,36 @@ class ProjectManager:
             return False
         return _now() >= expires_at
 
-    def create_project(self, name: str | None = None) -> Project:
+    # -- ownership ------------------------------------------------------------
+
+    def owns(self, project: Project, session_id: str | None) -> bool:
+        """Whether ``session_id`` may act on ``project`` under the active policy.
+
+        * Ownership disabled (local/self-hosted, the v1.0.0 path): always True,
+          so single-user self-hosting and pre-existing ownerless projects are
+          unaffected.
+        * Ownership enabled (shared public deployment): True only when the
+          project carries an ``owner_id`` that matches this session exactly.
+          Legacy projects with no ``owner_id`` are owned by nobody and are never
+          silently claimed by whoever asks first. Compared with
+          ``compare_digest`` to avoid leaking the match via timing.
+        """
+        if not settings.owner_scoping_enabled:
+            return True
+        if not session_id or not project.owner_id:
+            return False
+        return secrets.compare_digest(project.owner_id, session_id)
+
+    def load_metadata(self, project_id: str) -> Project | None:
+        """Cheap ownership/existence load: metadata only, no count refresh.
+
+        Hides expired projects and rejects unsafe ids (via ``_load``). Used by
+        the route ownership guard so the hot image-``/file`` path does not pay
+        the image+annotation recount that ``get_project`` performs.
+        """
+        return self._load(project_id)
+
+    def create_project(self, name: str | None = None, owner_id: str | None = None) -> Project:
         created_at = _now()
         project = Project(
             name=(name.strip() if name and name.strip() else "Untitled Project"),
@@ -68,6 +98,9 @@ class ProjectManager:
             updated_at=created_at,
             # Stamped from the server clock only — never from the request.
             expires_at=self._expiry_for(created_at),
+            # Stamped from the anonymous session cookie only (see routes); never
+            # accepted from a request body, so ownership cannot be spoofed.
+            owner_id=owner_id,
         )
 
         backend = get_backend()
@@ -145,13 +178,22 @@ class ProjectManager:
 
         return project
 
-    def list_projects(self) -> list[Project]:
+    def list_projects(self, owner_id: str | None = None) -> list[Project]:
+        """List projects, scoped to ``owner_id`` when ownership is enforced.
+
+        In cloud/public mode only the calling session's projects are returned,
+        so one browser never sees another's. In local/self-hosted mode ownership
+        is disabled and every project is returned, exactly as v1.0.0 did.
+        """
         projects: list[Project] = []
 
         for project_id in get_backend().list_project_ids():
             project = self._load(project_id)
-            if project is not None:
-                projects.append(self._refresh_counts(project))
+            if project is None:
+                continue
+            if not self.owns(project, owner_id):
+                continue
+            projects.append(self._refresh_counts(project))
 
         projects.sort(key=lambda p: p.created_at, reverse=True)
         return projects

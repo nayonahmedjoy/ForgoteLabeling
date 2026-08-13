@@ -1,11 +1,12 @@
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, File, Header, UploadFile
+from fastapi import APIRouter, Depends, File, Header, UploadFile
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from app.core.config import settings
+from app.core.session import current_session
 from app.core.storage_backend import get_backend
 from app.models.annotation import AnnotationIn
 from app.models.requests import (
@@ -29,17 +30,28 @@ router = APIRouter()
 # Shared helpers
 # -----------------------
 
-def _require_project(project_id: str):
-    """Return a 404 response when a project is missing **or expired**.
+def _authorize_project(project_id: str, session_id: str):
+    """Return ``(project, None)`` when the caller may use this project, else
+    ``(None, <404 response>)``.
 
-    Expired public projects are treated as already gone, so every project-scoped
-    endpoint refuses them the moment the deadline passes — without waiting for
-    the cleanup sweep to physically remove the objects. Uses the cheap existence
-    check, which does not recompute counts.
+    A project is usable only when it exists, is not expired, AND is owned by the
+    current anonymous session (ownership is a no-op in local/self-hosted mode).
+    A missing project and a project owned by a *different* session both return
+    the identical 404 envelope, so a caller cannot tell "does not exist" apart
+    from "exists but is not yours" — no existence leak, and project ids stay
+    unguessable-in-effect even if one is obtained.
+
+    Expired public projects load as ``None`` (``load_metadata`` hides them), so
+    every project-scoped endpoint refuses them the moment the deadline passes,
+    without waiting for the cleanup sweep to physically remove the objects.
+
+    The load is metadata-only (no image/annotation recount), so the hot image
+    ``/file`` path stays as cheap as a bare existence check.
     """
-    if project_manager.exists(project_id):
-        return None
-    return error("Project not found.", 404)
+    project = project_manager.load_metadata(project_id)
+    if project is None or not project_manager.owns(project, session_id):
+        return None, error("Project not found.", 404)
+    return project, None
 
 
 def _project_payload(project) -> dict:
@@ -49,9 +61,15 @@ def _project_payload(project) -> dict:
     server clock, so the UI can render a countdown without the browser's clock
     ever influencing the real deadline. It is ``None`` when the project has no
     expiry (local/self-hosted mode).
+
+    ``owner_id`` is stripped: it holds the anonymous session id, which lives only
+    in the HttpOnly cookie. Emitting it in a response body would hand the id to
+    page JavaScript and defeat the whole point of HttpOnly, so it never leaves
+    the server. The frontend never needs it — ownership is enforced server-side.
     """
     data = project.model_dump(mode="json")
     data["seconds_remaining"] = project_manager.seconds_remaining(project)
+    data.pop("owner_id", None)
     return data
 
 
@@ -120,22 +138,29 @@ def maintenance_cleanup(x_maintenance_token: str | None = Header(default=None)):
 # -----------------------
 
 @router.post("/projects")
-def create_project(payload: ProjectCreate | None = None):
+def create_project(
+    payload: ProjectCreate | None = None,
+    session: str = Depends(current_session),
+):
     name = payload.name if payload else None
-    project = project_manager.create_project(name)
+    # Owner is taken from the anonymous session cookie only, never the body.
+    project = project_manager.create_project(name, owner_id=session)
     return success("Project created.", _project_payload(project), 201)
 
 
 @router.get("/projects")
-def list_projects():
+def list_projects(session: str = Depends(current_session)):
     return success(
         "Projects fetched.",
-        [_project_payload(p) for p in project_manager.list_projects()],
+        [_project_payload(p) for p in project_manager.list_projects(owner_id=session)],
     )
 
 
 @router.get("/projects/{project_id}")
-def get_project(project_id: str):
+def get_project(project_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     project = project_manager.touch_opened(project_id)
     if project is None:
         return error("Project not found.", 404)
@@ -143,7 +168,14 @@ def get_project(project_id: str):
 
 
 @router.put("/projects/{project_id}")
-def update_project(project_id: str, payload: ProjectUpdate):
+def update_project(
+    project_id: str,
+    payload: ProjectUpdate,
+    session: str = Depends(current_session),
+):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     project = project_manager.update_project(
         project_id, name=payload.name, status=payload.status
     )
@@ -153,7 +185,10 @@ def update_project(project_id: str, payload: ProjectUpdate):
 
 
 @router.delete("/projects/{project_id}")
-def delete_project(project_id: str):
+def delete_project(project_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     if not project_manager.delete_project(project_id):
         return error("Project not found.", 404)
     return success("Project deleted.")
@@ -167,9 +202,11 @@ def delete_project(project_id: str):
 def upload_images(
     project_id: str,
     files: list[UploadFile] = File(...),
+    session: str = Depends(current_session),
 ):
-    if project_manager.get_project(project_id) is None:
-        return error("Project not found.", 404)
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
 
     uploaded = []
     skipped = []
@@ -195,9 +232,10 @@ def upload_images(
 
 
 @router.get("/projects/{project_id}/images")
-def list_images(project_id: str):
-    if project_manager.get_project(project_id) is None:
-        return error("Project not found.", 404)
+def list_images(project_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     images = upload_manager.list_images(project_id)
     return success(
         "Images fetched.",
@@ -206,10 +244,10 @@ def list_images(project_id: str):
 
 
 @router.get("/projects/{project_id}/images/{image_id}")
-def get_image(project_id: str, image_id: str):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def get_image(project_id: str, image_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     image = upload_manager.get_image(project_id, image_id)
     if image is None:
         return error("Image not found.", 404)
@@ -217,10 +255,10 @@ def get_image(project_id: str, image_id: str):
 
 
 @router.get("/projects/{project_id}/images/{image_id}/file")
-def get_image_file(project_id: str, image_id: str):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def get_image_file(project_id: str, image_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     image = upload_manager.get_image(project_id, image_id)
     if image is None:
         return error("Image not found.", 404)
@@ -231,10 +269,10 @@ def get_image_file(project_id: str, image_id: str):
 
 
 @router.delete("/projects/{project_id}/images/{image_id}")
-def delete_image(project_id: str, image_id: str):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def delete_image(project_id: str, image_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     if not upload_manager.delete_image(project_id, image_id):
         return error("Image not found.", 404)
     return success("Image deleted.")
@@ -245,9 +283,10 @@ def delete_image(project_id: str, image_id: str):
 # -----------------------
 
 @router.get("/projects/{project_id}/labels")
-def list_labels(project_id: str):
-    if project_manager.get_project(project_id) is None:
-        return error("Project not found.", 404)
+def list_labels(project_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     labels = label_manager.list_labels(project_id)
     return success(
         "Labels fetched.",
@@ -256,9 +295,14 @@ def list_labels(project_id: str):
 
 
 @router.post("/projects/{project_id}/labels")
-def create_label(project_id: str, payload: LabelCreate):
-    if project_manager.get_project(project_id) is None:
-        return error("Project not found.", 404)
+def create_label(
+    project_id: str,
+    payload: LabelCreate,
+    session: str = Depends(current_session),
+):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     try:
         label = label_manager.create_label(project_id, payload.name, payload.color)
     except LabelError as exc:
@@ -267,10 +311,15 @@ def create_label(project_id: str, payload: LabelCreate):
 
 
 @router.put("/projects/{project_id}/labels/{label_id}")
-def update_label(project_id: str, label_id: str, payload: LabelUpdate):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def update_label(
+    project_id: str,
+    label_id: str,
+    payload: LabelUpdate,
+    session: str = Depends(current_session),
+):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     try:
         label = label_manager.update_label(
             project_id, label_id, name=payload.name, color=payload.color
@@ -283,10 +332,10 @@ def update_label(project_id: str, label_id: str, payload: LabelUpdate):
 
 
 @router.delete("/projects/{project_id}/labels/{label_id}")
-def delete_label(project_id: str, label_id: str):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def delete_label(project_id: str, label_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     if label_manager.get_label(project_id, label_id) is None:
         return error("Label not found.", 404)
 
@@ -333,10 +382,10 @@ def _serialize_annotations(project_id: str, annotations):
 
 
 @router.get("/projects/{project_id}/images/{image_id}/annotations")
-def list_annotations(project_id: str, image_id: str):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def list_annotations(project_id: str, image_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     annotations = annotation_manager.list_for_image(project_id, image_id)
     return success(
         "Annotations fetched.",
@@ -345,10 +394,15 @@ def list_annotations(project_id: str, image_id: str):
 
 
 @router.post("/projects/{project_id}/images/{image_id}/annotations")
-def create_annotation(project_id: str, image_id: str, payload: AnnotationIn):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def create_annotation(
+    project_id: str,
+    image_id: str,
+    payload: AnnotationIn,
+    session: str = Depends(current_session),
+):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     if upload_manager.get_image(project_id, image_id) is None:
         return error("Image not found.", 404)
     try:
@@ -367,10 +421,11 @@ def update_annotation(
     image_id: str,
     annotation_id: str,
     payload: AnnotationIn,
+    session: str = Depends(current_session),
 ):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     # The annotation must exist AND belong to the image named in the path.
     # Matching on annotation_id alone would let a request against the wrong
     # image URL mutate an unrelated annotation, so we reject a mismatch as
@@ -391,10 +446,15 @@ def update_annotation(
 @router.delete(
     "/projects/{project_id}/images/{image_id}/annotations/{annotation_id}"
 )
-def delete_annotation(project_id: str, image_id: str, annotation_id: str):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def delete_annotation(
+    project_id: str,
+    image_id: str,
+    annotation_id: str,
+    session: str = Depends(current_session),
+):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     # Same relationship guard as update: only delete the annotation when it
     # actually belongs to the image in the path.
     existing = annotation_manager.get(project_id, annotation_id)
@@ -411,10 +471,10 @@ def delete_annotation(project_id: str, image_id: str, annotation_id: str):
 # -----------------------
 
 @router.get("/projects/{project_id}/export/yolo")
-def export_yolo(project_id: str):
-    project = project_manager.get_project(project_id)
-    if project is None:
-        return error("Project not found.", 404)
+def export_yolo(project_id: str, session: str = Depends(current_session)):
+    project, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
 
     images = upload_manager.list_images(project_id)
     annotations = annotation_manager.list_all(project_id)
@@ -441,16 +501,16 @@ def export_yolo(project_id: str):
 
 
 @router.get("/projects/{project_id}/export/coco")
-def export_coco(project_id: str):
+def export_coco(project_id: str, session: str = Depends(current_session)):
     """Export the project as a COCO dataset (images + annotations/instances.json).
 
     Deliberately the same shape as the YOLO endpoint above — same lookups, same
     archive delivery, same cloud-only scratch cleanup — so both formats behave
     identically from the frontend's point of view.
     """
-    project = project_manager.get_project(project_id)
-    if project is None:
-        return error("Project not found.", 404)
+    project, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
 
     images = upload_manager.list_images(project_id)
     annotations = annotation_manager.list_all(project_id)
@@ -490,10 +550,10 @@ def _cleanup_export(zip_path: Path) -> None:
 # -----------------------
 
 @router.post("/projects/{project_id}/images/{image_id}/predict")
-def predict(project_id: str, image_id: str):
-    gone = _require_project(project_id)
-    if gone is not None:
-        return gone
+def predict(project_id: str, image_id: str, session: str = Depends(current_session)):
+    _, denied = _authorize_project(project_id, session)
+    if denied is not None:
+        return denied
     image = upload_manager.get_image(project_id, image_id)
     if image is None:
         return error("Image not found.", 404)

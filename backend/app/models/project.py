@@ -15,6 +15,14 @@ class Project(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
     status: str = "active"
 
+    # Anonymous owner: the browser session id that created this project. Stamped
+    # server-side from the HttpOnly session cookie and never accepted from a
+    # request body, so a client cannot claim someone else's project. Optional and
+    # defaulting to ``None`` so metadata written before per-browser ownership
+    # existed still loads; such legacy/ownerless projects are treated as owned by
+    # nobody when ownership is enforced (see ProjectManager.owns).
+    owner_id: str | None = None
+
     # Hard deletion deadline for temporary public projects, stamped by the
     # server at creation time. ``None`` means "never expires", which is always
     # the case in local/self-hosted mode. This is deliberately a stored field so

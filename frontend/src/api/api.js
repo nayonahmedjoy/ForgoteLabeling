@@ -10,7 +10,13 @@ const baseURL =
   import.meta.env.VITE_API_URL ||
   "http://127.0.0.1:8000";
 
-const api = axios.create({ baseURL });
+// `withCredentials: true` so the browser sends (and stores) the HttpOnly
+// anonymous-session cookie the backend uses for per-browser project ownership.
+// Without it, cross-site XHR to the deployed API would omit the cookie and every
+// request would look like a brand-new browser. The backend must therefore NOT
+// use a wildcard CORS origin (it echoes the specific FRONTEND_ORIGIN); the two
+// settings go together.
+const api = axios.create({ baseURL, withCredentials: true });
 
 export const API_BASE = baseURL;
 

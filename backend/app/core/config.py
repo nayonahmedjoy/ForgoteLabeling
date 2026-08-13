@@ -49,6 +49,45 @@ class Settings(BaseSettings):
     MAINTENANCE_TOKEN: str = ""
 
     # -----------------------------------------------------------------
+    # Anonymous per-browser project ownership
+    # -----------------------------------------------------------------
+    # No login/signup: each browser gets a cryptographically random anonymous
+    # session id stored in an HttpOnly cookie, and a project is owned by the
+    # session that created it. Enforced automatically on the shared public
+    # deployment (cloud) so one browser cannot see/touch another's projects.
+    #
+    # Name of the HttpOnly session cookie. Kept generic (no product/user hint).
+    SESSION_COOKIE_NAME: str = "fl_sid"
+
+    # SameSite policy for the session cookie. The public deployment serves the
+    # SPA (Cloudflare Pages) and the API (Render) from *different sites*, and
+    # image thumbnails load as cross-site ``<img>`` subresources, so the cookie
+    # must ride cross-site requests — that requires ``SameSite=None``, which
+    # browsers only honor together with ``Secure``. ``None`` + ``Secure`` also
+    # works on ``http://localhost`` / ``http://127.0.0.1`` (treated as secure
+    # contexts), so local dev is unaffected. Override to ``lax``/``strict`` for a
+    # same-site or plain-http LAN self-host.
+    COOKIE_SAMESITE: str = "none"
+
+    # Whether the session cookie is marked ``Secure``. ``auto`` (the default)
+    # resolves to ``True``, which localhost still accepts and which is required
+    # whenever COOKIE_SAMESITE is ``none``. Set to ``false`` ONLY for a
+    # self-hosted instance served over plain http on a non-localhost host.
+    COOKIE_SECURE: str = "auto"
+
+    # How long (seconds) the anonymous session cookie persists, so a browser
+    # keeps its projects across restarts. Defaults to ~1 year; the cloud TTL
+    # deletes the underlying projects far sooner anyway.
+    SESSION_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 365
+
+    # Whether project ownership is enforced. ``auto`` (default) enforces it in
+    # cloud mode (the shared public deployment, where privacy is required) and
+    # leaves local/self-hosted mode exactly as v1.0.0 (no scoping), so existing
+    # ownerless projects and single-user workflows keep working. Force with
+    # ``on``/``off``.
+    OWNERSHIP_MODE: str = "auto"
+
+    # -----------------------------------------------------------------
     # CORS
     # -----------------------------------------------------------------
     # Local dev origins are always allowed. The deployed frontend origin is
@@ -98,6 +137,35 @@ class Settings(BaseSettings):
     @property
     def is_cloud(self) -> bool:
         return self.STORAGE_BACKEND.strip().lower() == "cloud"
+
+    @property
+    def session_cookie_secure(self) -> bool:
+        """Whether the session cookie is sent with the ``Secure`` attribute.
+
+        ``auto`` resolves to ``True`` (required when SameSite=None, and still
+        accepted by browsers over http://localhost). Any explicit truthy string
+        forces it on; ``false``/``0``/``no``/``off`` forces it off for a
+        plain-http LAN self-host.
+        """
+        value = self.COOKIE_SECURE.strip().lower()
+        if value in ("", "auto"):
+            return True
+        return value in ("1", "true", "yes", "on")
+
+    @property
+    def owner_scoping_enabled(self) -> bool:
+        """Whether project ownership is enforced (cloud-only by default).
+
+        Local/self-hosted mode is left unscoped so v1.0.0 behavior and existing
+        ownerless projects are preserved; the shared public deployment enforces
+        per-browser ownership so projects are private.
+        """
+        mode = self.OWNERSHIP_MODE.strip().lower()
+        if mode == "on":
+            return True
+        if mode == "off":
+            return False
+        return self.is_cloud
 
 
 settings = Settings()

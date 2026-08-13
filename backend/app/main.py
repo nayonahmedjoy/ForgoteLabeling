@@ -5,6 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.core.config import ensure_storage_dirs, settings
+from app.core.session import (
+    is_valid_session_id,
+    new_session_id,
+    set_session_cookie,
+)
 from app.utils.responses import error
 
 app = FastAPI(
@@ -29,6 +34,37 @@ app.add_middleware(
     # filename authoritative. Response *bodies* are unaffected.
     expose_headers=["Content-Disposition"],
 )
+
+
+@app.middleware("http")
+async def anonymous_session_middleware(request: Request, call_next):
+    """Give every browser a stable anonymous session id via an HttpOnly cookie.
+
+    On the first request from a browser (no valid session cookie yet) a
+    cryptographically random id is minted, stashed on ``request.state`` so route
+    handlers and the ownership check can read it, and written back as an HttpOnly
+    cookie on the response. Returning browsers simply reuse the cookie value.
+
+    The id is derived *only* from the cookie here — never from a request body,
+    header, or query parameter — so ownership cannot be spoofed by the client.
+    No id is ever placed in a response body, so page JavaScript never sees it.
+    """
+    raw = request.cookies.get(settings.SESSION_COOKIE_NAME)
+    if is_valid_session_id(raw):
+        session_id = raw
+        minted = False
+    else:
+        session_id = new_session_id()
+        minted = True
+
+    request.state.session_id = session_id
+    response = await call_next(request)
+
+    # Only send Set-Cookie when we minted a new id, so we do not rewrite the
+    # cookie (and its expiry) on every single request.
+    if minted:
+        set_session_cookie(response, session_id)
+    return response
 
 
 @app.exception_handler(RequestValidationError)
