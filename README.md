@@ -17,7 +17,7 @@ Create a project, upload images, define labels, draw bounding boxes, and export 
 
 ## 🚀 Live Demo
 
-Try it in your browser — no install required: **[Try ForgoteLabeling](https://YOUR-PROJECT.pages.dev)**
+Try it in your browser — no install required: **[Try ForgoteLabeling](https://forgotelabeling-frontend.onrender.com/)**
 
 > The public demo runs on free-tier hosting with **anonymous, temporary** projects — no sign-up and no accounts. Anyone with the link can create a project, upload images, annotate, and export YOLO. Projects are therefore **not private**, and **every project is permanently deleted 30 hours after it is created** — images, annotations, and labels included. **Export your dataset before the deadline**; see [Public projects are temporary](#-public-projects-are-temporary--30-hours-then-permanently-deleted). For real work, self-host with the [Local Development](#local-development) steps below, where your data stays on your own disk permanently.
 
